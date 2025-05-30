@@ -1,0 +1,28 @@
+yarn run v1.22.22
+$ next dev
+  ▲ Next.js 14.2.28
+  - Local:        http://localhost:3000
+  - Environments: .env
+  - Experiments (use with caution):
+    · outputFileTracingRoot
+
+ ✓ Starting...
+ ✓ Ready in 1535ms
+ ✓ Compiled /middleware in 221ms (174 modules)
+ ○ Compiling /login ...
+ ✓ Compiled / in 3.2s (1393 modules)
+ ⚠ Unsupported metadata themeColor is configured in metadata export in /. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ ⚠ Unsupported metadata viewport is configured in metadata export in /. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ ⚠ Unsupported metadata themeColor is configured in metadata export in /login. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ ⚠ Unsupported metadata viewport is configured in metadata export in /login. Please move it to viewport export instead.
+Read more: https://nextjs.org/docs/app/api-reference/functions/generate-viewport
+ GET / 200 in 1004ms
+ GET /login 200 in 3461ms
+ ✓ Compiled /api/auth/[...nextauth] in 479ms (923 modules)
+ GET /api/auth/session 200 in 1000ms
+ GET /api/auth/session 200 in 28ms
+ GET /api/auth/session 200 in 31ms
+[?25h
