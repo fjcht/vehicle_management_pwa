@@ -1,0 +1,10 @@
+{
+    "titulo_aplicacion": "Gestor de Taller",
+    "vehiculos": "Vehículos",
+    "calendario": "Calendario",
+    "configuracion": "Configuración",
+    "error": "Error",
+    "exito": "Éxito",
+    "atencion": "Atención",
+    "salir": "Salir",
+    "confirmar_salir": "¿Estás seguro de que quieres salir?",

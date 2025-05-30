@@ -1,0 +1,20 @@
+import customtkinter
+import tkinter as tk
+from tkinter import ttk, messagebox, simpledialog, Toplevel
+from tkcalendar import Calendar
+import json
+import os
+import sys # Importado para resource_path
+from datetime import datetime, timedelta
+import threading # Para tareas en segundo plano como la API
+import time # Para simular retrasos o manejar tiempos
+
+# Importar módulos propios (asegúrate de que estén en el mismo directorio o en el PYTHONPATH)
+try:
+    from db_manager import DBManager, Error as DBError # Asumiendo que DBManager puede lanzar DBError
+    # Importa ApiHandler si existe y es necesario
+    from api_handler import obtener_info_vin
+
+except ImportError as e:
+    messagebox.showerror("Error de Importación", f"No se pudo importar un módulo necesario: {e}")
+    exit() # Salir si los módulos esenciales no se encuentran

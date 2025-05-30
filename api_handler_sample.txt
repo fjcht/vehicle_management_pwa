@@ -1,0 +1,15 @@
+# api_handler.py
+import requests
+import json # Import json for potential detailed error handling if needed
+
+# URL de la API de NHTSA para obtener información del VIN
+NHTSA_API_URL = "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVin/{}?format=json"
+
+def obtener_info_vin(vin):
+    """
+    Llama a la API de NHTSA usando el VIN para obtener información del vehículo.
+
+    Args:
+        vin (str): El Número de Identificación del Vehículo (VIN) de 17 caracteres.
+
+    Returns:

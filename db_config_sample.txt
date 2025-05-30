@@ -1,0 +1,6 @@
+{
+  "host": "localhost",
+  "database": "taller_db",
+  "user": "taller_user",
+  "password": "Vertex2025"
+}

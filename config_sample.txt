@@ -1,0 +1,7 @@
+[Database]
+host = localhost
+user = taller_user
+password = Vertex2025
+database = taller_db
+port = 3306
+

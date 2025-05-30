@@ -1,0 +1,16 @@
+.
+├── vehicle-manager - Copy - Copy
+│   ├── VM_VERTEX.spec
+│   ├── api_handler.py
+│   ├── camera_scanner.py
+│   ├── config.ini
+│   ├── db_config.json
+│   ├── db_manager.py
+│   ├── languages
+│   │   └── es.json
+│   ├── main_app.py
+│   ├── main_app.spec
+│   └── requirements.txt
+└── vehicle-manager - Copy - Copy.7z
+
+2 directories, 11 files

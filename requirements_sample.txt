@@ -1,0 +1,6 @@
+mysql-connector-python
+requests
+opencv-python
+pyzbar
+ttkthemes
+Pillow
