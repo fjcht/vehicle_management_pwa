@@ -22,12 +22,10 @@
         "name": "next"
       }
     ],
-    "paths": {
-      "@/*": [
-        "@/*": ["./*"]
-      ]
-    }
-  },
+    "paths": { // <-- Abre el objeto paths
+      "@/*": [ "./app/*" ]
+    } // <-- Cierra el objeto paths aquí
+  }, // <-- Esta es la llave de cierre de compilerOptions (o el objeto que contiene plugins y paths)
   "include": [
     "next-env.d.ts",
     "**/*.ts",
