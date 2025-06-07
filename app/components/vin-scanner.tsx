@@ -627,7 +627,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
           {isScanning && (
             <>
               <div className="absolute inset-0 flex items-center justify-center">
-                <div className="border-2 border-white border-dashed w-3/4 h-16 rounded-lg flex items-center justify-center bg-black bg-opacity%20">
+                <div className="border-2 border-white border-dashed w-3/4 h-16 rounded-lg flex items-center justify-center">
                   <span className="text-white text-sm font-medium">Position VIN here</span>
                 </div>
               </div>
