@@ -3,7 +3,7 @@
   "name": "vehicle-management-pwa",
   "builds": [
     {
-      "src": "package.json",
+      "src": "next.config.js", // Cambiado de "package.json" a "next.config.js" (más común para Next.js)
       "use": "@vercel/next"
     }
   ],
@@ -11,18 +11,6 @@
     "NEXTAUTH_URL": "@nextauth_url",
     "NEXTAUTH_SECRET": "@nextauth_secret",
     "DATABASE_URL": "@database_url"
-  },
-  "build": {
-    "env": {
-      "NEXTAUTH_URL": "@nextauth_url",
-      "NEXTAUTH_SECRET": "@nextauth_secret",
-      "DATABASE_URL": "@database_url"
-    }
-  },
-  "functions": {
-    "app/api/**/*.ts": {
-      "maxDuration": 30
-    }
   },
   "routes": [
     {
