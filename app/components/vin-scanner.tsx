@@ -1,4 +1,3 @@
-
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
@@ -33,10 +32,19 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
   const [isMobile, setIsMobile] = useState(false)
   const [isCheckingPermissions, setIsCheckingPermissions] = useState(false)
   const [debugInfo, setDebugInfo] = useState<string[]>([])
+  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]) // Nuevo estado
+  const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null) // Nuevo estado
   
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const { toast } = useToast()
+
+  // Mover addDebugInfo aquí, antes de cualquier useCallback/useEffect que lo use
+  const addDebugInfo = useCallback((info: string) => {
+    const timestamp = new Date().toLocaleTimeString()
+    setDebugInfo(prev => [...prev.slice(-4), `[${timestamp}] ${info}`])
+    console.log(`[VIN Scanner] ${info}`)
+  }, [])
 
   // Detect mobile device
   useEffect(() => {
@@ -60,13 +68,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     checkMobile()
     window.addEventListener('resize', checkMobile)
     return () => window.removeEventListener('resize', checkMobile)
-  }, [])
-
-  const addDebugInfo = useCallback((info: string) => {
-    const timestamp = new Date().toLocaleTimeString()
-    setDebugInfo(prev => [...prev.slice(-4), `[${timestamp}] ${info}`])
-    console.log(`[VIN Scanner] ${info}`)
-  }, [])
+  }, [addDebugInfo]) // addDebugInfo ya está disponible aquí
 
   // Check camera permissions
   const checkCameraPermissions = useCallback(async () => {
@@ -74,7 +76,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     addDebugInfo('=== CHECKING CAMERA PERMISSIONS ===')
     
     try {
-      // Check basic API availability
       addDebugInfo('Checking MediaDevices API availability...')
       if (!navigator.mediaDevices) {
         throw new Error('MediaDevices API not supported in this browser')
@@ -86,7 +87,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       }
       addDebugInfo('✓ getUserMedia available')
 
-      // Check if permissions API is available
       addDebugInfo('Checking Permissions API...')
       if ('permissions' in navigator) {
         try {
@@ -160,40 +160,110 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     }
   }, [addDebugInfo])
 
-  // Get optimal camera constraints for mobile
+  // Nuevo: Enumerar cámaras disponibles
+  const enumerateCameras = useCallback(async () => {
+    addDebugInfo('Enumerating media devices...')
+    try {
+      // Necesitamos un stream activo para que enumerateDevices devuelva etiquetas de dispositivos
+      // Si ya tenemos permiso, podemos pedir un stream temporal y luego detenerlo.
+      // Si no, enumerateDevices puede devolver dispositivos sin etiquetas.
+      let tempStream: MediaStream | null = null;
+      if (permissionStatus === 'granted') {
+        try {
+          tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          addDebugInfo('Temporary stream obtained for device enumeration.');
+        } catch (e) {
+          addDebugInfo(`Could not get temporary stream for enumeration: ${e}`);
+        }
+      }
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+      setAvailableCameras(videoDevices);
+      addDebugInfo(`Found ${videoDevices.length} video devices.`);
+      videoDevices.forEach((device, index) => addDebugInfo(`Device ${index}: id=${device.deviceId}, label=${device.label || 'No label (permission needed)'}, facingMode=${(device as any).facingMode || 'unknown'}`));
+
+      // Si no hay una cámara seleccionada, intenta seleccionar la trasera o la primera
+      if (!selectedCameraId && videoDevices.length > 0) {
+        const rearCamera = videoDevices.find(device => device.label.toLowerCase().includes('back') || device.label.toLowerCase().includes('environment'));
+        if (rearCamera) {
+          setSelectedCameraId(rearCamera.deviceId);
+          addDebugInfo(`Defaulting to rear camera: ${rearCamera.label}`);
+        } else {
+          setSelectedCameraId(videoDevices[0].deviceId);
+          addDebugInfo(`Defaulting to first camera: ${videoDevices[0].label}`);
+        }
+      }
+
+      if (tempStream) {
+        tempStream.getTracks().forEach(track => track.stop());
+        addDebugInfo('Temporary stream stopped.');
+      }
+
+    } catch (error) {
+      addDebugInfo(`Error enumerating devices: ${error}`);
+      console.error('Error enumerating devices:', error);
+    }
+  }, [addDebugInfo, permissionStatus, selectedCameraId]);
+
+  // MODIFICADO: getCameraConstraints para usar la cámara seleccionada
   const getCameraConstraints = useCallback(() => {
-    const baseConstraints = {
+    const constraints: MediaStreamConstraints = {
       video: {
-        facingMode: 'environment', // Use back camera on mobile
         width: { ideal: isMobile ? 1920 : 1280 },
         height: { ideal: isMobile ? 1080 : 720 },
         aspectRatio: { ideal: 16/9 },
         frameRate: { ideal: 30, max: 30 }
       }
+    };
+
+    if (selectedCameraId) {
+      (constraints.video as MediaTrackConstraints).deviceId = { exact: selectedCameraId };
+      addDebugInfo(`Using specific camera ID: ${selectedCameraId}`);
+    } else {
+      // Fallback a 'environment' si no hay ID seleccionado (o si es la primera vez)
+      (constraints.video as MediaTrackConstraints).facingMode = 'environment';
+      addDebugInfo(`No specific camera ID, trying 'environment' facingMode.`);
     }
 
     if (isMobile) {
-      // Mobile-specific optimizations
-      return {
-        video: {
-          ...baseConstraints.video,
-          focusMode: 'continuous',
-          exposureMode: 'continuous',
-          whiteBalanceMode: 'continuous',
-          zoom: { ideal: 1.0 }
-        }
-      }
+      (constraints.video as MediaTrackConstraints) = {
+        ...(constraints.video as MediaTrackConstraints),
+        focusMode: 'continuous',
+        exposureMode: 'continuous',
+        whiteBalanceMode: 'continuous',
+        zoom: { ideal: 1.0 }
+      };
     }
+    addDebugInfo(`Using camera constraints: ${JSON.stringify(constraints)}`);
+    return constraints;
+  }, [isMobile, selectedCameraId, addDebugInfo]);
 
-    return baseConstraints
-  }, [isMobile])
+
+  const stopCamera = useCallback(() => {
+    addDebugInfo('Stopping camera...')
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => {
+        track.stop()
+        addDebugInfo(`Stopped track: ${track.kind}`)
+      })
+      streamRef.current = null
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+    setIsScanning(false)
+    addDebugInfo('Camera stopped')
+  }, [addDebugInfo])
 
   const startCamera = useCallback(async () => {
     addDebugInfo('=== STARTING CAMERA PROCESS ===')
     setCameraError(null)
     
+    // Detener la cámara si ya está activa
+    stopCamera(); // Asegurarse de que no haya streams activos
+
     try {
-      // Check permissions first
       if (permissionStatus === 'denied') {
         throw new Error('Camera permission denied. Please enable camera access in your browser settings.')
       }
@@ -204,8 +274,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       }
       addDebugInfo('✓ getUserMedia is available')
 
-      // CRITICAL: Wait for video element to be available in DOM
-      addDebugInfo('Checking video element availability...')
       let videoElement = videoRef.current
       let retryCount = 0
       const maxRetries = 10
@@ -225,78 +293,52 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       addDebugInfo('✓ Video element is available')
       addDebugInfo(`Video element properties: tagName=${videoElement.tagName}, readyState=${videoElement.readyState}, networkState=${videoElement.networkState}`)
 
-      // Progressive fallback constraints - start with most basic
-      const constraintSets = [
-        // Most basic - just video
-        { video: true },
-        // Basic with back camera
-        { video: { facingMode: 'environment' } },
-        // Medium constraints
-        { 
-          video: { 
-            facingMode: 'environment',
-            width: { ideal: 640 },
-            height: { ideal: 480 }
-          } 
-        },
-        // Full constraints (original)
-        getCameraConstraints()
-      ]
+      // Usar las constraints que fuerzan la cámara trasera
+      const constraints = getCameraConstraints();
+      addDebugInfo(`Attempting to start camera with constraints: ${JSON.stringify(constraints, null, 2)}`);
 
-      let stream: MediaStream | null = null
-      let usedConstraints = null
-
-      // Try each constraint set
-      for (let i = 0; i < constraintSets.length; i++) {
-        const constraints = constraintSets[i]
-        addDebugInfo(`Attempting constraints set ${i + 1}/${constraintSets.length}:`)
-        addDebugInfo(`${JSON.stringify(constraints, null, 2)}`)
+      let stream: MediaStream | null = null;
+      try {
+        const getUserMediaPromise = navigator.mediaDevices.getUserMedia(constraints);
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('getUserMedia timeout after 10 seconds')), 10000);
+        });
         
+        stream = await Promise.race([getUserMediaPromise, timeoutPromise]) as MediaStream;
+        addDebugInfo(`✓ SUCCESS with selected constraints`);
+        addDebugInfo(`Stream tracks: ${stream.getTracks().length}`);
+        stream.getTracks().forEach((track, index) => {
+          addDebugInfo(`Track ${index}: ${track.kind}, enabled: ${track.enabled}, readyState: ${track.readyState}`);
+          if (track.kind === 'video') {
+            const settings = track.getSettings();
+            addDebugInfo(`Video settings: ${JSON.stringify(settings)}`);
+          }
+        });
+      } catch (constraintError) {
+        addDebugInfo(`✗ FAILED with specified constraints: ${constraintError}`);
+        if (constraintError instanceof Error) {
+          addDebugInfo(`Error name: ${constraintError.name}`);
+          addDebugInfo(`Error message: ${constraintError.message}`);
+        }
+        // Si falla con las constraints específicas, intentar con las más básicas como fallback
+        addDebugInfo('Attempting fallback to basic video: true constraints...');
         try {
-          addDebugInfo(`Calling getUserMedia with constraints set ${i + 1}...`)
-          
-          // Add timeout to getUserMedia call
-          const getUserMediaPromise = navigator.mediaDevices.getUserMedia(constraints)
-          const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('getUserMedia timeout after 10 seconds')), 10000)
-          })
-          
-          stream = await Promise.race([getUserMediaPromise, timeoutPromise]) as MediaStream
-          usedConstraints = constraints
-          addDebugInfo(`✓ SUCCESS with constraints set ${i + 1}`)
-          addDebugInfo(`Stream tracks: ${stream.getTracks().length}`)
-          stream.getTracks().forEach((track, index) => {
-            addDebugInfo(`Track ${index}: ${track.kind}, enabled: ${track.enabled}, readyState: ${track.readyState}`)
-            if (track.kind === 'video') {
-              const settings = track.getSettings()
-              addDebugInfo(`Video settings: ${JSON.stringify(settings)}`)
-            }
-          })
-          break
-        } catch (constraintError) {
-          addDebugInfo(`✗ FAILED with constraints set ${i + 1}: ${constraintError}`)
-          if (constraintError instanceof Error) {
-            addDebugInfo(`Error name: ${constraintError.name}`)
-            addDebugInfo(`Error message: ${constraintError.message}`)
-          }
-          
-          // If this is the last constraint set, re-throw the error
-          if (i === constraintSets.length - 1) {
-            throw constraintError
-          }
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          addDebugInfo('✓ SUCCESS with fallback constraints: { video: true }');
+        } catch (fallbackError) {
+          addDebugInfo(`✗ FAILED with fallback constraints: ${fallbackError}`);
+          throw fallbackError; // Si el fallback también falla, re-lanzar el error original o el del fallback
         }
       }
 
       if (!stream) {
-        throw new Error('Failed to get camera stream with any constraint set')
+        throw new Error('Failed to get camera stream with any constraint set');
       }
 
-      // Double-check video element is still available before assigning stream
       addDebugInfo('Final video element check before stream assignment...')
       const finalVideoElement = videoRef.current
       if (!finalVideoElement) {
         addDebugInfo('✗ Video element disappeared during camera setup')
-        // Clean up stream
         stream.getTracks().forEach(track => track.stop())
         throw new Error('Video element became unavailable during setup')
       }
@@ -304,19 +346,16 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       addDebugInfo('Setting up video element...')
       addDebugInfo(`Final video element state: readyState=${finalVideoElement.readyState}, networkState=${finalVideoElement.networkState}`)
       
-      // Set the stream with additional error handling
       try {
         finalVideoElement.srcObject = stream
         streamRef.current = stream
         addDebugInfo('✓ Stream assigned to video element successfully')
       } catch (streamError) {
         addDebugInfo(`✗ Error assigning stream to video: ${streamError}`)
-        // Clean up stream
         stream.getTracks().forEach(track => track.stop())
         throw new Error(`Failed to assign stream to video element: ${streamError}`)
       }
       
-      // Wait for video to be ready with detailed logging
       await new Promise<void>((resolve, reject) => {
         const timeoutId = setTimeout(() => {
           addDebugInfo('✗ Video loading timeout after 8 seconds')
@@ -355,7 +394,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
         
         addDebugInfo(`Current video readyState: ${finalVideoElement.readyState}`)
         
-        // Check if already ready
         if (finalVideoElement.readyState >= 1) { // HAVE_METADATA
           addDebugInfo('Video already has metadata, resolving immediately')
           clearTimeout(timeoutId)
@@ -368,7 +406,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       
       setIsScanning(true)
       addDebugInfo('=== CAMERA STARTED SUCCESSFULLY ===')
-      addDebugInfo(`Final constraints used: ${JSON.stringify(usedConstraints)}`)
       
       toast({
         title: "Camera Ready",
@@ -380,7 +417,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       addDebugInfo(`Error: ${error}`)
       console.error('Error accessing camera:', error)
       
-      // Clean up any partial state
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop())
         streamRef.current = null
@@ -429,23 +465,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
         variant: "destructive"
       })
     }
-  }, [toast, permissionStatus, getCameraConstraints, addDebugInfo, isMobile])
-
-  const stopCamera = useCallback(() => {
-    addDebugInfo('Stopping camera...')
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => {
-        track.stop()
-        addDebugInfo(`Stopped track: ${track.kind}`)
-      })
-      streamRef.current = null
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null
-    }
-    setIsScanning(false)
-    addDebugInfo('Camera stopped')
-  }, [addDebugInfo])
+  }, [toast, permissionStatus, getCameraConstraints, addDebugInfo, isMobile, stopCamera]);
 
   const handleManualVinSubmit = async () => {
     if (!manualVin || manualVin.length !== 17) {
@@ -465,7 +485,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       setVehicleData(data)
       onVinDetected(manualVin, data || undefined)
       
-      addDebugInfo(`VIN decoded successfully: ${data ? 'with data' : 'no data'}`)
+      addDebugInfo(`VIN decoded successfully: ${data ? 'con datos' : 'sin datos'}`)
       toast({
         title: "VIN Processed",
         description: data ? "Vehicle information retrieved successfully." : "VIN processed, but no additional data available.",
@@ -484,11 +504,8 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
   }
 
   const captureVinFromCamera = () => {
-    // In a real implementation, this would use OCR to detect VIN from camera
-    // For now, we'll simulate VIN detection with a more realistic approach
     addDebugInfo('Capturing VIN from camera (simulated)')
     
-    // Simulate different VINs for testing
     const simulatedVins = [
       "1HGBH41JXMN109186", // Honda
       "1FTFW1ET5DFC10312", // Ford
@@ -510,8 +527,15 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
 
   // Auto-check permissions on mount
   useEffect(() => {
-    checkCameraPermissions()
-  }, [checkCameraPermissions])
+    checkCameraPermissions();
+  }, [checkCameraPermissions]);
+
+  // Nuevo: Enumerar cámaras cuando se otorgan permisos o al montar
+  useEffect(() => {
+    if (permissionStatus === 'granted') {
+      enumerateCameras();
+    }
+  }, [permissionStatus, enumerateCameras]);
 
   // Ensure video element is available after mount
   useEffect(() => {
@@ -522,7 +546,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     } else {
       addDebugInfo('✗ Video element not available after mount')
     }
-  }, [])
+  }, [addDebugInfo])
 
   return (
     <Card className="w-full max-w-md mx-auto">
@@ -603,7 +627,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
           {isScanning && (
             <>
               <div className="absolute inset-0 flex items-center justify-center">
-                <div className="border-2 border-white border-dashed w-3/4 h-16 rounded-lg flex items-center justify-center bg-black bg-opacity-20">
+                <div className="border-2 border-white border-dashed w-3/4 h-16 rounded-lg flex items-center justify-center bg-black bg-opacity%20">
                   <span className="text-white text-sm font-medium">Position VIN here</span>
                 </div>
               </div>
@@ -640,6 +664,25 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
         {/* Camera Controls */}
         {!isScanning && (
           <div className="space-y-2">
+            {/* Selector de cámara */}
+            {availableCameras.length > 1 && (
+              <div className="space-y-1">
+                <Label htmlFor="camera-select">Select Camera:</Label>
+                <select
+                  id="camera-select"
+                  className="block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                  value={selectedCameraId || ''}
+                  onChange={(e) => setSelectedCameraId(e.target.value)}
+                >
+                  {availableCameras.map(camera => (
+                    <option key={camera.deviceId} value={camera.deviceId}>
+                      {camera.label || `Camera ${camera.deviceId.substring(0, 8)}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <Button 
               onClick={startCamera} 
               className="w-full"
