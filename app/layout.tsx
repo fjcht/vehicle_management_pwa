@@ -3,18 +3,18 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/toaster'
-import { SessionProvider } from 'next-auth/react' // Importar SessionProvider
-import { auth } from '@/auth' // Importar la función auth desde tu archivo auth.ts
-import Navbar from '@/components/navbar' // Asegúrate de que esta importación sea correcta
+import { SessionProvider } from 'next-auth/react'
+import { auth } from '@/app/lib/auth' // ¡RUTA CORREGIDA!
+// Eliminado: import Navbar from '@/components/navbar' // Ya no se importa si no existe
 
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: 'VIN Scanner PWA',
   description: 'Progressive Web App for VIN scanning and decoding',
-  manifest: '/manifest.json', // Asegúrate de que tu manifest.json esté en la carpeta public
+  manifest: '/manifest.json',
   icons: {
-    apple: '/icon-192x192.png', // Asegúrate de que tus iconos estén en la carpeta public
+    apple: '/icon-192x192.png',
   },
   themeColor: '#000000',
 }
@@ -24,7 +24,7 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode
 }) {
-  const session = await auth(); // Obtener la sesión en el servidor
+  const session = await auth();
 
   return (
     <html lang="en" suppressHydrationWarning>
@@ -35,9 +35,8 @@ export default async function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          {/* Envuelve tu aplicación con SessionProvider */}
           <SessionProvider session={session}>
-            <Navbar /> {/* Asegúrate de que Navbar no tenga problemas de cliente/servidor */}
+            {/* Eliminado: <Navbar /> */}
             {children}
           </SessionProvider>
           <Toaster />
