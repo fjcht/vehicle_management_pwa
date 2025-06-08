@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { Camera, X, Check, Loader2, AlertTriangle, Smartphone, Monitor, Scan } from 'lucide-react' // Añadido 'Scan'
+import { Camera, X, Check, Loader2, AlertTriangle, Smartphone, Monitor, Scan } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
@@ -11,27 +11,15 @@ import { Alert, AlertDescription } from './ui/alert'
 import { decodeVIN, NHTSAVehicleData } from '@/lib/nhtsa'
 import { useToast } from '@/hooks/use-toast'
 
-// Importar Tesseract.js
-import { createWorker, PSM } from 'tesseract.js' // Añadido PSM para Page Segmentation Mode
-
-interface VinScannerProps {
-  onVinDetected: (vin: string, vehicleData?: NHTSAVehicleData) => void
-  initialVin?: string
-}
-
-interface CameraError {
-  name: string
-  message: string
-  constraint?: string
-}
+// Importación dinámica de Tesseract.js
+// Esto asegura que Tesseract.js solo se cargue en el cliente
+let createWorker: typeof import('tesseract.js')['createWorker'];
+let PSM: typeof import('tesseract.js')['PSM'];
 
 // Función para validar si una cadena es un VIN (básica)
 const isValidVIN = (text: string): boolean => {
-  // Un VIN debe tener exactamente 17 caracteres
   if (text.length !== 17) return false;
-  // No debe contener las letras I, O, Q (para evitar confusiones con 1, 0)
   if (/[IOQioq]/.test(text)) return false;
-  // Debe ser alfanumérico (puedes añadir más validaciones si lo necesitas)
   if (!/^[A-HJ-NPR-Z0-9]{17}$/i.test(text)) return false;
   return true;
 };
@@ -54,12 +42,13 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
   const [ocrProgress, setOcrProgress] = useState(0);
   const [detectedVin, setDetectedVin] = useState<string | null>(null);
   const [ocrStatus, setOcrStatus] = useState<string>('Idle');
+  const [isTesseractReady, setIsTesseractReady] = useState(false); // Nuevo estado para Tesseract
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null); // Para capturar frames
-  const ocrWorkerRef = useRef<Tesseract.Worker | null>(null); // Referencia al worker de Tesseract
-  const scanIntervalRef = useRef<NodeJS.Timeout | null>(null); // Para el intervalo de escaneo
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const ocrWorkerRef = useRef<any | null>(null); // Usar 'any' temporalmente para el worker
+  const scanIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const { toast } = useToast()
 
   const addDebugInfo = useCallback((info: string) => {
@@ -70,15 +59,15 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
 
   // Inicializar Tesseract Worker
   const initializeOcrWorker = useCallback(async () => {
-    if (ocrWorkerRef.current) {
-      addDebugInfo('OCR Worker already initialized.');
+    if (ocrWorkerRef.current || !isTesseractReady) { // Solo inicializar si Tesseract está cargado
+      addDebugInfo('OCR Worker already initialized or Tesseract not ready.');
       return;
     }
     setIsOcrLoading(true);
     setOcrStatus('Loading OCR engine...');
     addDebugInfo('Initializing Tesseract OCR worker...');
     try {
-      const worker = await createWorker('eng', 1, { // 'eng' para inglés, 1 para versión de Tesseract
+      const worker = await createWorker('eng', 1, {
         logger: m => {
           if (m.status === 'recognizing') {
             setOcrProgress(Math.round(m.progress * 100));
@@ -92,9 +81,8 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       await worker.load();
       await worker.loadLanguage('eng');
       await worker.initialize('eng');
-      // Configurar Page Segmentation Mode para una sola línea de texto (útil para VINs)
       await worker.reco.setParameters({
-        tessedit_pageseg_mode: PSM.PSM_SINGLE_BLOCK // O PSM_SINGLE_LINE si el VIN está en una línea aislada
+        tessedit_pageseg_mode: PSM.PSM_SINGLE_BLOCK
       });
       ocrWorkerRef.current = worker;
       addDebugInfo('Tesseract OCR worker initialized successfully.');
@@ -107,7 +95,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     } finally {
       setIsOcrLoading(false);
     }
-  }, [addDebugInfo]);
+  }, [addDebugInfo, isTesseractReady]); // Dependencia de isTesseractReady
 
   // Función para escanear un frame
   const scanFrameForVIN = useCallback(async () => {
@@ -124,22 +112,19 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       return;
     }
 
-    // Ajustar el tamaño del canvas al video
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
 
-    // Dibujar el frame actual del video en el canvas
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Definir el área de interés (ROI) para el escaneo del VIN
-    // Esto es crucial para el rendimiento y la precisión.
-    // Ajusta estos valores según el tamaño de tu marco "Position VIN here"
-    const roiWidth = canvas.width * 0.75; // 75% del ancho del video
-    const roiHeight = canvas.height * (16 / 48); // 16px de alto del marco / 48px de alto del video (ejemplo)
+    // Ajusta estos valores basándote en lo que observaste en el navegador
+    // Ejemplo: si el marco es 75% del ancho del video y 15% del alto del video
+    const roiWidth = canvas.width * 0.75; // Si w-3/4 es 75%
+    const roiHeight = canvas.height * 0.15; // Ajusta este porcentaje según el alto real de tu marco
+
     const roiX = (canvas.width - roiWidth) / 2;
     const roiY = (canvas.height - roiHeight) / 2;
 
-    // Capturar solo la región de interés
     const imageData = context.getImageData(roiX, roiY, roiWidth, roiHeight);
 
     setOcrStatus('Scanning frame...');
@@ -147,21 +132,19 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       const { data: { text } } = await ocrWorkerRef.current.recognize(imageData);
       addDebugInfo(`OCR Raw Text: "${text}"`);
 
-      // Limpiar y validar el texto
-      const cleanedText = text.replace(/[^A-HJ-NPR-Z0-9]/gi, '').toUpperCase(); // Eliminar caracteres no VIN
+      const cleanedText = text.replace(/[^A-HJ-NPR-Z0-9]/gi, '').toUpperCase();
       addDebugInfo(`OCR Cleaned Text: "${cleanedText}"`);
 
       if (isValidVIN(cleanedText)) {
         setDetectedVin(cleanedText);
-        setManualVin(cleanedText); // Rellenar el campo manual
-        stopCamera(); // Detener la cámara una vez detectado
+        setManualVin(cleanedText);
+        stopCamera();
         addDebugInfo(`VIN Detected: ${cleanedText}`);
         toast({
           title: "VIN Detected!",
           description: `Found VIN: ${cleanedText}. Please verify and submit.`,
           variant: "success"
         });
-        // No llamar onVinDetected aquí, esperar a que el usuario lo envíe manualmente
       } else {
         setDetectedVin(null);
         setOcrStatus('No valid VIN found in frame.');
@@ -173,6 +156,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     }
   }, [addDebugInfo, isDecoding, stopCamera, toast]);
 
+  // ... (resto del código de VinScanner, sin cambios hasta aquí) ...
   // Detect mobile device
   useEffect(() => {
     const checkMobile = () => {
@@ -364,7 +348,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
 
   const stopCamera = useCallback(() => {
     addDebugInfo('Stopping camera...')
-    if (scanIntervalRef.current) { // Detener el intervalo de escaneo
+    if (scanIntervalRef.current) {
       clearInterval(scanIntervalRef.current);
       scanIntervalRef.current = null;
       addDebugInfo('OCR scan interval stopped.');
@@ -382,8 +366,8 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       videoRef.current.load(); 
     }
     setIsScanning(false)
-    setDetectedVin(null); // Limpiar VIN detectado
-    setOcrStatus('Idle'); // Resetear estado OCR
+    setDetectedVin(null);
+    setOcrStatus('Idle');
     addDebugInfo('Camera stopped')
   }, [addDebugInfo])
 
@@ -391,7 +375,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     addDebugInfo('=== STARTING CAMERA PROCESS ===')
     setCameraError(null)
     
-    stopCamera(); // Asegurarse de que no haya streams activos
+    stopCamera();
 
     try {
       if (permissionStatus === 'denied') {
@@ -541,7 +525,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       // Iniciar el escaneo de VIN con Tesseract.js
       if (ocrWorkerRef.current) {
         addDebugInfo('Starting OCR scan interval...');
-        // Escanear cada 500ms (ajusta según el rendimiento deseado)
         scanIntervalRef.current = setInterval(scanFrameForVIN, 500); 
       } else {
         addDebugInfo('OCR worker not ready, cannot start scan interval.');
@@ -608,7 +591,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
         variant: "destructive"
       })
     }
-  }, [toast, permissionStatus, getCameraConstraints, addDebugInfo, isMobile, stopCamera, scanFrameForVIN]); // Añadido scanFrameForVIN
+  }, [toast, permissionStatus, getCameraConstraints, addDebugInfo, isMobile, stopCamera, scanFrameForVIN]);
 
   const handleManualVinSubmit = async () => {
     if (!manualVin || manualVin.length !== 17) {
@@ -646,8 +629,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     }
   }
 
-  // Eliminado: captureVinFromCamera simulado, ahora usaremos el OCR real
-
   // Auto-check permissions on mount
   useEffect(() => {
     checkCameraPermissions();
@@ -660,9 +641,22 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     }
   }, [permissionStatus, enumerateCameras]);
 
-  // Inicializar OCR worker al montar el componente
+  // Cargar Tesseract.js dinámicamente
   useEffect(() => {
-    initializeOcrWorker();
+    addDebugInfo('Attempting to dynamically import Tesseract.js...');
+    import('tesseract.js')
+      .then(module => {
+        createWorker = module.createWorker;
+        PSM = module.PSM;
+        setIsTesseractReady(true);
+        addDebugInfo('Tesseract.js imported successfully.');
+      })
+      .catch(error => {
+        addDebugInfo(`Failed to import Tesseract.js: ${error}`);
+        console.error('Failed to import Tesseract.js:', error);
+        setCameraError({ name: 'TesseractLoadError', message: 'Failed to load OCR library.' });
+      });
+
     // Limpiar el worker al desmontar el componente
     return () => {
       if (ocrWorkerRef.current) {
@@ -675,7 +669,15 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
         scanIntervalRef.current = null;
       }
     };
-  }, [initializeOcrWorker, addDebugInfo]);
+  }, [addDebugInfo]);
+
+  // Inicializar OCR worker cuando Tesseract esté listo
+  useEffect(() => {
+    if (isTesseractReady) {
+      initializeOcrWorker();
+    }
+  }, [isTesseractReady, initializeOcrWorker]);
+
 
   // Ensure video element is available after mount
   useEffect(() => {
@@ -776,7 +778,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
                 </div>
               </div>
               <div className="absolute top-2 right-2 space-x-2">
-                {/* Botón de captura eliminado, ahora es automático */}
                 <Button 
                   size={isMobile ? "default" : "sm"} 
                   variant="outline" 
@@ -839,7 +840,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
             <Button 
               onClick={startCamera} 
               className="w-full"
-              disabled={isCheckingPermissions || permissionStatus === 'denied' || isOcrLoading}
+              disabled={isCheckingPermissions || permissionStatus === 'denied' || isOcrLoading || !isTesseractReady} // Deshabilitar si Tesseract no está listo
               size={isMobile ? "lg" : "default"}
             >
               {isCheckingPermissions ? (
@@ -851,6 +852,11 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   Loading OCR... ({ocrProgress}%)
+                </>
+              ) : !isTesseractReady ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Loading OCR Library...
                 </>
               ) : (
                 <>
