@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { Camera, X, Check, Loader2, AlertTriangle, Smartphone, Monitor } from 'lucide-react'
+import { Camera, X, Check, Loader2, AlertTriangle, Smartphone, Monitor, Scan } from 'lucide-react' // Añadido 'Scan'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
@@ -10,6 +10,9 @@ import { Badge } from './ui/badge'
 import { Alert, AlertDescription } from './ui/alert'
 import { decodeVIN, NHTSAVehicleData } from '@/lib/nhtsa'
 import { useToast } from '@/hooks/use-toast'
+
+// Importar Tesseract.js
+import { createWorker, PSM } from 'tesseract.js' // Añadido PSM para Page Segmentation Mode
 
 interface VinScannerProps {
   onVinDetected: (vin: string, vehicleData?: NHTSAVehicleData) => void
@@ -22,6 +25,17 @@ interface CameraError {
   constraint?: string
 }
 
+// Función para validar si una cadena es un VIN (básica)
+const isValidVIN = (text: string): boolean => {
+  // Un VIN debe tener exactamente 17 caracteres
+  if (text.length !== 17) return false;
+  // No debe contener las letras I, O, Q (para evitar confusiones con 1, 0)
+  if (/[IOQioq]/.test(text)) return false;
+  // Debe ser alfanumérico (puedes añadir más validaciones si lo necesitas)
+  if (!/^[A-HJ-NPR-Z0-9]{17}$/i.test(text)) return false;
+  return true;
+};
+
 export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) {
   const [isScanning, setIsScanning] = useState(false)
   const [manualVin, setManualVin] = useState(initialVin)
@@ -32,19 +46,132 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
   const [isMobile, setIsMobile] = useState(false)
   const [isCheckingPermissions, setIsCheckingPermissions] = useState(false)
   const [debugInfo, setDebugInfo] = useState<string[]>([])
-  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]) // Nuevo estado
-  const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null) // Nuevo estado
-  
+  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([])
+  const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null)
+
+  // Nuevos estados para Tesseract.js
+  const [isOcrLoading, setIsOcrLoading] = useState(false);
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [detectedVin, setDetectedVin] = useState<string | null>(null);
+  const [ocrStatus, setOcrStatus] = useState<string>('Idle');
+
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null); // Para capturar frames
+  const ocrWorkerRef = useRef<Tesseract.Worker | null>(null); // Referencia al worker de Tesseract
+  const scanIntervalRef = useRef<NodeJS.Timeout | null>(null); // Para el intervalo de escaneo
   const { toast } = useToast()
 
-  // Mover addDebugInfo aquí, antes de cualquier useCallback/useEffect que lo use
   const addDebugInfo = useCallback((info: string) => {
     const timestamp = new Date().toLocaleTimeString()
     setDebugInfo(prev => [...prev.slice(-4), `[${timestamp}] ${info}`])
     console.log(`[VIN Scanner] ${info}`)
   }, [])
+
+  // Inicializar Tesseract Worker
+  const initializeOcrWorker = useCallback(async () => {
+    if (ocrWorkerRef.current) {
+      addDebugInfo('OCR Worker already initialized.');
+      return;
+    }
+    setIsOcrLoading(true);
+    setOcrStatus('Loading OCR engine...');
+    addDebugInfo('Initializing Tesseract OCR worker...');
+    try {
+      const worker = await createWorker('eng', 1, { // 'eng' para inglés, 1 para versión de Tesseract
+        logger: m => {
+          if (m.status === 'recognizing') {
+            setOcrProgress(Math.round(m.progress * 100));
+            setOcrStatus(`Scanning... (${Math.round(m.progress * 100)}%)`);
+          } else {
+            setOcrStatus(m.status);
+          }
+          addDebugInfo(`OCR Worker: ${m.status} - ${m.progress ? (m.progress * 100).toFixed(0) + '%' : ''}`);
+        },
+      });
+      await worker.load();
+      await worker.loadLanguage('eng');
+      await worker.initialize('eng');
+      // Configurar Page Segmentation Mode para una sola línea de texto (útil para VINs)
+      await worker.reco.setParameters({
+        tessedit_pageseg_mode: PSM.PSM_SINGLE_BLOCK // O PSM_SINGLE_LINE si el VIN está en una línea aislada
+      });
+      ocrWorkerRef.current = worker;
+      addDebugInfo('Tesseract OCR worker initialized successfully.');
+      setOcrStatus('OCR Ready');
+    } catch (error) {
+      addDebugInfo(`Error initializing OCR worker: ${error}`);
+      console.error('Error initializing Tesseract OCR worker:', error);
+      setCameraError({ name: 'OCRInitError', message: 'Failed to load OCR engine.' });
+      setOcrStatus('OCR Error');
+    } finally {
+      setIsOcrLoading(false);
+    }
+  }, [addDebugInfo]);
+
+  // Función para escanear un frame
+  const scanFrameForVIN = useCallback(async () => {
+    if (!videoRef.current || !canvasRef.current || !ocrWorkerRef.current || isDecoding) {
+      return;
+    }
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas.getContext('2d');
+
+    if (!context) {
+      addDebugInfo('Canvas context not available.');
+      return;
+    }
+
+    // Ajustar el tamaño del canvas al video
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    // Dibujar el frame actual del video en el canvas
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Definir el área de interés (ROI) para el escaneo del VIN
+    // Esto es crucial para el rendimiento y la precisión.
+    // Ajusta estos valores según el tamaño de tu marco "Position VIN here"
+    const roiWidth = canvas.width * 0.75; // 75% del ancho del video
+    const roiHeight = canvas.height * (16 / 48); // 16px de alto del marco / 48px de alto del video (ejemplo)
+    const roiX = (canvas.width - roiWidth) / 2;
+    const roiY = (canvas.height - roiHeight) / 2;
+
+    // Capturar solo la región de interés
+    const imageData = context.getImageData(roiX, roiY, roiWidth, roiHeight);
+
+    setOcrStatus('Scanning frame...');
+    try {
+      const { data: { text } } = await ocrWorkerRef.current.recognize(imageData);
+      addDebugInfo(`OCR Raw Text: "${text}"`);
+
+      // Limpiar y validar el texto
+      const cleanedText = text.replace(/[^A-HJ-NPR-Z0-9]/gi, '').toUpperCase(); // Eliminar caracteres no VIN
+      addDebugInfo(`OCR Cleaned Text: "${cleanedText}"`);
+
+      if (isValidVIN(cleanedText)) {
+        setDetectedVin(cleanedText);
+        setManualVin(cleanedText); // Rellenar el campo manual
+        stopCamera(); // Detener la cámara una vez detectado
+        addDebugInfo(`VIN Detected: ${cleanedText}`);
+        toast({
+          title: "VIN Detected!",
+          description: `Found VIN: ${cleanedText}. Please verify and submit.`,
+          variant: "success"
+        });
+        // No llamar onVinDetected aquí, esperar a que el usuario lo envíe manualmente
+      } else {
+        setDetectedVin(null);
+        setOcrStatus('No valid VIN found in frame.');
+      }
+    } catch (error) {
+      addDebugInfo(`OCR recognition error: ${error}`);
+      console.error('OCR recognition error:', error);
+      setOcrStatus('OCR Error during scan.');
+    }
+  }, [addDebugInfo, isDecoding, stopCamera, toast]);
 
   // Detect mobile device
   useEffect(() => {
@@ -68,7 +195,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     checkMobile()
     window.addEventListener('resize', checkMobile)
     return () => window.removeEventListener('resize', checkMobile)
-  }, [addDebugInfo]) // addDebugInfo ya está disponible aquí
+  }, [addDebugInfo])
 
   // Check camera permissions
   const checkCameraPermissions = useCallback(async () => {
@@ -108,15 +235,12 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
         setPermissionStatus('unknown')
       }
 
-      // Test camera access with very basic constraints
       addDebugInfo('Testing camera access with basic constraints...')
       try {
         addDebugInfo('Calling getUserMedia for permission test...')
         const testStream = await navigator.mediaDevices.getUserMedia({ video: true })
         
         addDebugInfo(`✓ Camera access test successful`)
-        addDebugInfo(`Test stream tracks: ${testStream.getTracks().length}`)
-        
         testStream.getTracks().forEach((track, index) => {
           addDebugInfo(`Test track ${index}: ${track.kind}, enabled: ${track.enabled}`)
           track.stop()
@@ -150,6 +274,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     } catch (error) {
       addDebugInfo(`=== PERMISSION CHECK FAILED ===`)
       addDebugInfo(`Permission check error: ${error}`)
+      console.error('Error accessing camera:', error)
       setCameraError({
         name: 'PermissionError',
         message: error instanceof Error ? error.message : 'Unknown permission error'
@@ -160,13 +285,9 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     }
   }, [addDebugInfo])
 
-  // Nuevo: Enumerar cámaras disponibles
   const enumerateCameras = useCallback(async () => {
     addDebugInfo('Enumerating media devices...')
     try {
-      // Necesitamos un stream activo para que enumerateDevices devuelva etiquetas de dispositivos
-      // Si ya tenemos permiso, podemos pedir un stream temporal y luego detenerlo.
-      // Si no, enumerateDevices puede devolver dispositivos sin etiquetas.
       let tempStream: MediaStream | null = null;
       if (permissionStatus === 'granted') {
         try {
@@ -183,9 +304,12 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       addDebugInfo(`Found ${videoDevices.length} video devices.`);
       videoDevices.forEach((device, index) => addDebugInfo(`Device ${index}: id=${device.deviceId}, label=${device.label || 'No label (permission needed)'}, facingMode=${(device as any).facingMode || 'unknown'}`));
 
-      // Si no hay una cámara seleccionada, intenta seleccionar la trasera o la primera
       if (!selectedCameraId && videoDevices.length > 0) {
-        const rearCamera = videoDevices.find(device => device.label.toLowerCase().includes('back') || device.label.toLowerCase().includes('environment'));
+        const rearCamera = videoDevices.find(device => 
+          device.label.toLowerCase().includes('back') || 
+          device.label.toLowerCase().includes('environment') ||
+          (device as any).facingMode === 'environment'
+        );
         if (rearCamera) {
           setSelectedCameraId(rearCamera.deviceId);
           addDebugInfo(`Defaulting to rear camera: ${rearCamera.label}`);
@@ -206,7 +330,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     }
   }, [addDebugInfo, permissionStatus, selectedCameraId]);
 
-  // MODIFICADO: getCameraConstraints para usar la cámara seleccionada
   const getCameraConstraints = useCallback(() => {
     const constraints: MediaStreamConstraints = {
       video: {
@@ -221,7 +344,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       (constraints.video as MediaTrackConstraints).deviceId = { exact: selectedCameraId };
       addDebugInfo(`Using specific camera ID: ${selectedCameraId}`);
     } else {
-      // Fallback a 'environment' si no hay ID seleccionado (o si es la primera vez)
       (constraints.video as MediaTrackConstraints).facingMode = 'environment';
       addDebugInfo(`No specific camera ID, trying 'environment' facingMode.`);
     }
@@ -242,6 +364,11 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
 
   const stopCamera = useCallback(() => {
     addDebugInfo('Stopping camera...')
+    if (scanIntervalRef.current) { // Detener el intervalo de escaneo
+      clearInterval(scanIntervalRef.current);
+      scanIntervalRef.current = null;
+      addDebugInfo('OCR scan interval stopped.');
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => {
         track.stop()
@@ -251,8 +378,12 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null
+      videoRef.current.pause();
+      videoRef.current.load(); 
     }
     setIsScanning(false)
+    setDetectedVin(null); // Limpiar VIN detectado
+    setOcrStatus('Idle'); // Resetear estado OCR
     addDebugInfo('Camera stopped')
   }, [addDebugInfo])
 
@@ -260,7 +391,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     addDebugInfo('=== STARTING CAMERA PROCESS ===')
     setCameraError(null)
     
-    // Detener la cámara si ya está activa
     stopCamera(); // Asegurarse de que no haya streams activos
 
     try {
@@ -293,7 +423,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       addDebugInfo('✓ Video element is available')
       addDebugInfo(`Video element properties: tagName=${videoElement.tagName}, readyState=${videoElement.readyState}, networkState=${videoElement.networkState}`)
 
-      // Usar las constraints que fuerzan la cámara trasera
       const constraints = getCameraConstraints();
       addDebugInfo(`Attempting to start camera with constraints: ${JSON.stringify(constraints, null, 2)}`);
 
@@ -306,7 +435,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
         
         stream = await Promise.race([getUserMediaPromise, timeoutPromise]) as MediaStream;
         addDebugInfo(`✓ SUCCESS with selected constraints`);
-        addDebugInfo(`Stream tracks: ${stream.getTracks().length}`);
         stream.getTracks().forEach((track, index) => {
           addDebugInfo(`Track ${index}: ${track.kind}, enabled: ${track.enabled}, readyState: ${track.readyState}`);
           if (track.kind === 'video') {
@@ -320,14 +448,13 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
           addDebugInfo(`Error name: ${constraintError.name}`);
           addDebugInfo(`Error message: ${constraintError.message}`);
         }
-        // Si falla con las constraints específicas, intentar con las más básicas como fallback
         addDebugInfo('Attempting fallback to basic video: true constraints...');
         try {
           stream = await navigator.mediaDevices.getUserMedia({ video: true });
           addDebugInfo('✓ SUCCESS with fallback constraints: { video: true }');
         } catch (fallbackError) {
           addDebugInfo(`✗ FAILED with fallback constraints: ${fallbackError}`);
-          throw fallbackError; // Si el fallback también falla, re-lanzar el error original o el del fallback
+          throw fallbackError;
         }
       }
 
@@ -367,6 +494,10 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
         
         const onLoadedMetadata = () => {
           addDebugInfo(`✓ Video metadata loaded: ${finalVideoElement.videoWidth}x${finalVideoElement.videoHeight}`)
+        }
+        
+        const onCanPlay = () => {
+          addDebugInfo('✓ Video can play')
           clearTimeout(timeoutId)
           finalVideoElement.removeEventListener('loadedmetadata', onLoadedMetadata)
           finalVideoElement.removeEventListener('error', onError)
@@ -374,13 +505,9 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
           resolve()
         }
         
-        const onCanPlay = () => {
-          addDebugInfo('✓ Video can play')
-        }
-        
         const onError = (e: Event) => {
           addDebugInfo(`✗ Video error event: ${e}`)
-          addDebugInfo(`Video error details: ${finalVideoElement.error}`)
+          addDebugInfo(`Video error details: ${finalVideoElement.error?.message || 'Unknown error'}`)
           clearTimeout(timeoutId)
           finalVideoElement.removeEventListener('loadedmetadata', onLoadedMetadata)
           finalVideoElement.removeEventListener('error', onError)
@@ -394,18 +521,32 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
         
         addDebugInfo(`Current video readyState: ${finalVideoElement.readyState}`)
         
-        if (finalVideoElement.readyState >= 1) { // HAVE_METADATA
-          addDebugInfo('Video already has metadata, resolving immediately')
+        if (finalVideoElement.readyState >= 3) {
+          addDebugInfo('Video already can play, resolving immediately')
           clearTimeout(timeoutId)
           finalVideoElement.removeEventListener('loadedmetadata', onLoadedMetadata)
           finalVideoElement.removeEventListener('error', onError)
           finalVideoElement.removeEventListener('canplay', onCanPlay)
           resolve()
+        } else {
+          finalVideoElement.play().catch(playError => {
+            addDebugInfo(`Error attempting to play video: ${playError}`);
+          });
         }
       })
       
       setIsScanning(true)
       addDebugInfo('=== CAMERA STARTED SUCCESSFULLY ===')
+
+      // Iniciar el escaneo de VIN con Tesseract.js
+      if (ocrWorkerRef.current) {
+        addDebugInfo('Starting OCR scan interval...');
+        // Escanear cada 500ms (ajusta según el rendimiento deseado)
+        scanIntervalRef.current = setInterval(scanFrameForVIN, 500); 
+      } else {
+        addDebugInfo('OCR worker not ready, cannot start scan interval.');
+        setOcrStatus('OCR not ready for scan.');
+      }
       
       toast({
         title: "Camera Ready",
@@ -423,6 +564,8 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       }
       if (videoRef.current) {
         videoRef.current.srcObject = null
+        videoRef.current.pause();
+        videoRef.current.load();
       }
       
       let errorMessage = 'Unable to access camera'
@@ -465,7 +608,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
         variant: "destructive"
       })
     }
-  }, [toast, permissionStatus, getCameraConstraints, addDebugInfo, isMobile, stopCamera]);
+  }, [toast, permissionStatus, getCameraConstraints, addDebugInfo, isMobile, stopCamera, scanFrameForVIN]); // Añadido scanFrameForVIN
 
   const handleManualVinSubmit = async () => {
     if (!manualVin || manualVin.length !== 17) {
@@ -503,27 +646,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     }
   }
 
-  const captureVinFromCamera = () => {
-    addDebugInfo('Capturing VIN from camera (simulated)')
-    
-    const simulatedVins = [
-      "1HGBH41JXMN109186", // Honda
-      "1FTFW1ET5DFC10312", // Ford
-      "1G1ZT53806F109149", // Chevrolet
-      "WBAVA33598NL73456", // BMW
-      "JM1BL1SF7A1234567"  // Mazda
-    ]
-    
-    const randomVin = simulatedVins[Math.floor(Math.random() * simulatedVins.length)]
-    setManualVin(randomVin)
-    stopCamera()
-    
-    addDebugInfo(`Simulated VIN captured: ${randomVin}`)
-    toast({
-      title: "VIN Detected",
-      description: "VIN captured from camera. Please verify and submit.",
-    })
-  }
+  // Eliminado: captureVinFromCamera simulado, ahora usaremos el OCR real
 
   // Auto-check permissions on mount
   useEffect(() => {
@@ -536,6 +659,23 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       enumerateCameras();
     }
   }, [permissionStatus, enumerateCameras]);
+
+  // Inicializar OCR worker al montar el componente
+  useEffect(() => {
+    initializeOcrWorker();
+    // Limpiar el worker al desmontar el componente
+    return () => {
+      if (ocrWorkerRef.current) {
+        addDebugInfo('Terminating OCR worker...');
+        ocrWorkerRef.current.terminate();
+        ocrWorkerRef.current = null;
+      }
+      if (scanIntervalRef.current) {
+        clearInterval(scanIntervalRef.current);
+        scanIntervalRef.current = null;
+      }
+    };
+  }, [initializeOcrWorker, addDebugInfo]);
 
   // Ensure video element is available after mount
   useEffect(() => {
@@ -624,22 +764,19 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
             onCanPlay={() => addDebugInfo('Video canplay event')}
             onError={(e) => addDebugInfo(`Video error event: ${e}`)}
           />
+          {/* Canvas para capturar frames (oculto) */}
+          <canvas ref={canvasRef} className="hidden" />
+
           {isScanning && (
             <>
               <div className="absolute inset-0 flex items-center justify-center">
+                {/* Marco de posición del VIN - SIN FONDO NEGRO */}
                 <div className="border-2 border-white border-dashed w-3/4 h-16 rounded-lg flex items-center justify-center">
                   <span className="text-white text-sm font-medium">Position VIN here</span>
                 </div>
               </div>
               <div className="absolute top-2 right-2 space-x-2">
-                <Button 
-                  size={isMobile ? "default" : "sm"} 
-                  onClick={captureVinFromCamera}
-                  className={isMobile ? "px-4 py-2" : ""}
-                >
-                  <Check className="w-4 h-4" />
-                  {isMobile && <span className="ml-2">Capture</span>}
-                </Button>
+                {/* Botón de captura eliminado, ahora es automático */}
                 <Button 
                   size={isMobile ? "default" : "sm"} 
                   variant="outline" 
@@ -657,6 +794,22 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
                   </div>
                 </div>
               )}
+              {/* Indicador de escaneo OCR */}
+              <div className="absolute bottom-2 left-2 right-2">
+                <Badge className="w-full justify-center text-center">
+                  {isOcrLoading ? (
+                    <>
+                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                      {ocrStatus} ({ocrProgress}%)
+                    </>
+                  ) : (
+                    <>
+                      <Scan className="w-3 h-3 mr-1" />
+                      {ocrStatus}
+                    </>
+                  )}
+                </Badge>
+              </div>
             </>
           )}
         </div>
@@ -686,13 +839,18 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
             <Button 
               onClick={startCamera} 
               className="w-full"
-              disabled={isCheckingPermissions || permissionStatus === 'denied'}
+              disabled={isCheckingPermissions || permissionStatus === 'denied' || isOcrLoading}
               size={isMobile ? "lg" : "default"}
             >
               {isCheckingPermissions ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   Checking Permissions...
+                </>
+              ) : isOcrLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Loading OCR... ({ocrProgress}%)
                 </>
               ) : (
                 <>
@@ -726,7 +884,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
               placeholder="Enter 17-character VIN"
               maxLength={17}
               className={`font-mono ${isMobile ? 'text-lg' : ''}`}
-              style={isMobile ? { fontSize: '16px' } : {}} // Prevent zoom on iOS
+              style={isMobile ? { fontSize: '16px' } : {}}
             />
             <Button 
               onClick={handleManualVinSubmit}
