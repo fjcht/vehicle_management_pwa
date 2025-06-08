@@ -4,8 +4,7 @@ import './globals.css'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Toaster } from '@/components/ui/toaster'
 import { SessionProvider } from 'next-auth/react' // Importar SessionProvider
-import { auth } from './lib/auth' // ¡CORRECCIÓN AQUÍ: RUTA ACTUALIZADA!
-// Eliminado: import Navbar from '@/components/navbar' // ¡CORRECCIÓN AQUÍ: ELIMINADO!
+import { auth } from 'next-auth'
 
 const inter = Inter({ subsets: ['latin'] })
 
