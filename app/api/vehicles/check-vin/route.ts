@@ -7,7 +7,9 @@ async function findVehicleByVinInDatabase(vin: string) {
   const mockDatabase = [
     { vin: 'WP0AA29963S620150', make: 'Porsche', model: '911', year: 2015, color: 'Red', source: 'database' },
     { vin: '2GCEK19T741344731', make: 'Chevrolet', model: 'Silverado', year: 2004, color: 'Blue', source: 'database' },
-    // ... más vehículos
+    // Añade el VIN que estás probando manualmente aquí para simular que no está en la DB
+    // y forzar la llamada a NHTSA.
+    // { vin: 'WP0CA29941S650320', make: 'Simulated', model: 'Test', year: 2023, source: 'database' },
   ];
 
   const foundVehicle = mockDatabase.find(v => v.vin === vin);
@@ -15,25 +17,28 @@ async function findVehicleByVinInDatabase(vin: string) {
   // --- FIN DEL REEMPLAZO ---
 }
 
-// Función para llamar a tu propia API de NHTSA internamente
+
+// Función para llamar DIRECTAMENTE a la API externa de NHTSA
 async function fetchVinDataFromNHTSAApi(vin: string) {
+  // CAMBIO CLAVE: La URL ahora apunta directamente a la API de NHTSA
+  const externalNHTSAUrl = `https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/${vin}?format=json`;
+  console.log(`[check-vin] Calling EXTERNAL NHTSA API: ${externalNHTSAUrl}`); // LOG AÑADIDO
+
   try {
-    // Llama a tu propia ruta de API de NHTSA
-    // Importante: Usa la URL completa si estás en un entorno de servidor,
-    // o una ruta relativa si estás seguro de que el contexto lo permite.
-    // Para Vercel, es seguro usar la ruta relativa /api/nhtsa/${vin}
-    const response = await fetch(`${process.env.NEXT_PUBLIC_VERCEL_URL || 'http://localhost:3000'}/api/nhtsa/${vin}`);
+    const response = await fetch(externalNHTSAUrl); // Llama a la API externa
+    console.log(`[check-vin] EXTERNAL NHTSA API response status: ${response.status}`); // LOG AÑADIDO
 
     if (!response.ok) {
-      // Si tu API de NHTSA devuelve un error (ej. 400, 500), lo manejamos aquí
-      const errorData = await response.json();
-      console.error(`Error from internal NHTSA API for VIN ${vin}:`, errorData);
-      return null; // O lanzar un error si quieres que el check-vin falle
+      // Leer como texto para evitar JSON parse error si la respuesta no es JSON
+      const errorText = await response.text();
+      console.error(`[check-vin] Error from EXTERNAL NHTSA API for VIN ${vin}: Status ${response.status}, Body: ${errorText}`);
+      return null;
     }
     const data = await response.json();
+    console.log(`[check-vin] Raw data from EXTERNAL NHTSA API for ${vin}:`, JSON.stringify(data, null, 2)); // LOG AÑADIDO
     return data;
   } catch (error) {
-    console.error(`Failed to fetch VIN data from internal NHTSA API for ${vin}:`, error);
+    console.error(`[check-vin] Failed to fetch VIN data from EXTERNAL NHTSA API for ${vin}:`, error); // LOG AÑADIDO
     return null;
   }
 }
@@ -46,14 +51,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'VIN parameter is missing' }, { status: 400 });
   }
 
-  console.log(`[API] Received VIN for check: ${vin}`);
+  console.log(`[check-vin] Received VIN for check: ${vin}`);
 
   try {
     // 1. Intentar encontrar el VIN en tu base de datos
     const vehicleData = await findVehicleByVinInDatabase(vin);
 
     if (vehicleData) {
-      console.log(`[API] VIN ${vin} found in database. Returning existing data.`);
+      console.log(`[check-vin] VIN ${vin} found in database. Returning existing data.`);
       return NextResponse.json({
         vin,
         found: true,
@@ -62,39 +67,53 @@ export async function GET(request: Request) {
       });
     } else {
       // 2. Si no se encuentra en la base de datos, intentar decodificarlo con NHTSA
-      console.log(`[API] VIN ${vin} not found in database. Attempting NHTSA decode...`);
-      const nhtsaData = await fetchVinDataFromNHTSAApi(vin);
+      console.log(`[check-vin] VIN ${vin} not found in database. Attempting NHTSA decode...`);
+      const nhtsaData = await fetchVinDataFromNHTSAApi(vin); // Llama a la función que ahora usa la API externa
 
+      // Verificar si nhtsaData es válido y contiene resultados
       if (nhtsaData && nhtsaData.Results && nhtsaData.Results.length > 0 && nhtsaData.Results[0].ErrorCode === '0') {
-        // NHTSA encontró datos válidos
-        console.log(`[API] VIN ${vin} decoded successfully by NHTSA.`);
-        // Puedes procesar los resultados de NHTSA para un formato más amigable si lo deseas
+        console.log(`[check-vin] VIN ${vin} decoded successfully by NHTSA. Processing results.`); // LOG AÑADIDO
         const decodedInfo = nhtsaData.Results.reduce((acc: any, item: any) => {
           if (item.Value && item.Variable) {
-            acc[item.Variable.replace(/\s/g, '')] = item.Value; // Ejemplo: "Make" -> "Make"
+            const key = item.Variable.replace(/[^a-zA-Z0-9]/g, '');
+            acc[key.charAt(0).toLowerCase() + key.slice(1)] = item.Value;
           }
           return acc;
         }, {});
 
+        const commonFields: any = {};
+        const findValue = (variableName: string) => nhtsaData.Results.find((r: any) => r.Variable === variableName)?.Value;
+
+        commonFields.make = findValue('Make');
+        commonFields.model = findValue('Model');
+        commonFields.modelYear = findValue('Model Year');
+        commonFields.bodyClass = findValue('Body Class');
+        commonFields.vehicleType = findValue('Vehicle Type');
+        commonFields.engineCylinders = findValue('Engine Cylinders');
+        commonFields.fuelType = findValue('Fuel Type - Primary');
+        commonFields.plantCountry = findValue('Plant Country');
+
+        const filteredCommonFields = Object.fromEntries(Object.entries(commonFields).filter(([_, v]) => v != null));
+
+
         return NextResponse.json({
           vin,
-          found: false, // Sigue siendo 'false' porque no está en TU base de datos
+          found: false,
           message: `VIN ${vin} is new. Decoded info from NHTSA available.`,
-          data: { ...decodedInfo, source: 'nhtsa_api' } // Añade la fuente de los datos
+          data: { ...decodedInfo, ...filteredCommonFields, source: 'nhtsa_api' }
         });
       } else {
-        // NHTSA no encontró datos o hubo un error
-        console.log(`[API] VIN ${vin} not found in database and could not be decoded by NHTSA.`);
+        console.log(`[check-vin] VIN ${vin} not found in database and no valid decode information from NHTSA.`); // LOG AÑADIDO
         return NextResponse.json({
           vin,
           found: false,
           message: `VIN ${vin} is new, but no decode information available from NHTSA.`,
-          data: null // No hay datos de NHTSA
+          data: null
         });
       }
     }
   } catch (error: any) {
-    console.error('Error during VIN check process:', error);
+    console.error('[check-vin] Error during VIN check process:', error);
     return NextResponse.json({ error: 'Failed to process VIN check', details: error.message }, { status: 500 });
   }
 }
