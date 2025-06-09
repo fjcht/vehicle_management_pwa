@@ -4,7 +4,7 @@ import './globals.css'
 import { ThemeProvider } from '@/app/components/theme-provider'
 import { Toaster } from '@/app/components/ui/toaster'
 import { SessionProvider } from 'next-auth/react' // Importar SessionProvider
-import { auth } from 'next-auth'
+// Eliminado: import { auth } from 'next-auth' // ¡ELIMINADO!
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   icons: {
     apple: '/icon-192x192.png', // Asegúrate de que tus iconos estén en la carpeta public
   },
-  themeColor: '#000000',
+  themeColor: '#0000',
 }
 
 export default async function RootLayout({
@@ -23,7 +23,7 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode
 }) {
-  const session = await auth(); // Obtener la sesión en el servidor
+  // Eliminado: const session = await auth(); // ¡ELIMINADO!
 
   return (
     <html lang="en" suppressHydrationWarning>
@@ -35,8 +35,8 @@ export default async function RootLayout({
           disableTransitionOnChange
         >
           {/* Envuelve tu aplicación con SessionProvider */}
-          <SessionProvider session={session}>
-            {/* Eliminado: <Navbar /> */} {/* ¡CORRECCIÓN AQUÍ: ELIMINADO! */}
+          {/* SessionProvider no necesita la prop 'session' aquí si no la obtienes en el layout */}
+          <SessionProvider> 
             {children}
           </SessionProvider>
           <Toaster />
