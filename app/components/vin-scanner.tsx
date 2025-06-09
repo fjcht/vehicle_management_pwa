@@ -474,7 +474,8 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
         // Asegurarse de que el lector no esté ya decodificando del mismo dispositivo
         // Esto es para evitar múltiples llamadas a decodeFromVideoDevice
           // @ts-ignore - is, isDecoding, isScanning son propiedades internas de ZXing
-          codeReader.isDecoding || !codeReader.isScanning) {
+          if (!codeReader.isDecoding && !codeReader.isScanning) {
+          codeReader.decodeFromVideoDevice(
           codeReader.decodeFromVideoDevice(
             selectedCameraId || undefined,
             videoElement,
