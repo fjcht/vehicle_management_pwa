@@ -1,138 +1,303 @@
-import { NextResponse } from 'next/server';
+'use client'
 
-// Suponiendo que tienes una forma de interactuar con tu base de datos
-// Esto es un placeholder. Reemplázalo con tu ORM, cliente de DB, etc.
-async function findVehicleByVinInDatabase(vin: string) {
-  // --- REEMPLAZA ESTA LÓGICA CON TU CONSULTA REAL A LA BASE DE DATOS ---
-  const mockDatabase = [
-    { vin: 'WP0AA29963S620150', make: 'Porsche', model: '911', year: 2015, color: 'Red', source: 'database' },
-    { vin: '2GCEK19T741344731', make: 'Chevrolet', model: 'Silverado', year: 2004, color: 'Blue', source: 'database' },
-    // Añade el VIN que estás probando manualmente aquí para simular que no está en la DB
-    // y forzar la llamada a NHTSA.
-    // { vin: 'WP0CA29941S650320', make: 'Simulated', model: 'Test', year: 2023, source: 'database' },
-  ];
+import { useState, useEffect } from 'react'
+import { Search, Camera, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react'
+import { Button } from '@/app/components/ui/button'
+import { Input } from '@/app/components/ui/input'
+import { Label } from '@/app/components/ui/label'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card'
+import { Alert, AlertDescription } from '@/app/components/ui/alert'
+import { VinScanner } from '@/app/components/vin-scanner'
+import { useToast } from '@/app/hooks/use-toast'
 
-  const foundVehicle = mockDatabase.find(v => v.vin === vin);
-  return foundVehicle || null;
-  // --- FIN DEL REEMPLAZO ---
+interface VehicleData {
+  id?: string
+  vin?: string
+  licensePlate?: string
+  make?: string
+  model?: string
+  year?: number
+  color?: string
+  engineType?: string
+  transmission?: string
+  fuelType?: string
+  mileage?: number
+  parkingSpot?: string
+  client?: {
+    id: string
+    name: string
+    phone?: string
+    email?: string
+  } | null
+  assignedTo?: {
+    id: string
+    name: string
+  } | null
+  source?: 'database' | 'nhtsa_api'
+  nhtsaData?: any
 }
 
+interface SmartVinInputProps {
+  onVehicleDataFound: (data: VehicleData, source: 'database' | 'nhtsa') => void
+  initialVin?: string
+  disabled?: boolean
+}
 
-// Función para llamar DIRECTAMENTE a la API externa de NHTSA
-async function fetchVinDataFromNHTSAApi(vin: string) {
-  const externalNHTSAUrl = `https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/${vin}?format=json`;
-  console.log(`[check-vin] Calling EXTERNAL NHTSA API: ${externalNHTSAUrl}`);
+export function SmartVinInput({ onVehicleDataFound, initialVin = '', disabled = false }: SmartVinInputProps) {
+  const [vin, setVin] = useState(initialVin)
+  const [isLoading, setIsLoading] = useState(false)
+  const [showScanner, setShowScanner] = useState(false)
+  const [lastSearchedVin, setLastSearchedVin] = useState('')
+  const [searchResult, setSearchResult] = useState<{
+    found: boolean
+    message: string
+    data: VehicleData | null
+  } | null>(null)
+  const { toast } = useToast()
 
-  try {
-    const response = await fetch(externalNHTSAUrl);
-    console.log(`[check-vin] EXTERNAL NHTSA API response status: ${response.status}`);
+  useEffect(() => {
+    setVin(initialVin)
+  }, [initialVin])
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[check-vin] Error from EXTERNAL NHTSA API for VIN ${vin}: Status ${response.status}, Body: ${errorText}`);
-      return null;
+  const validateVin = (vinCode: string): boolean => {
+    // Validación básica de VIN (17 caracteres alfanuméricos)
+    const vinRegex = /^[A-HJ-NPR-Z0-9]{17}$/i
+    return vinRegex.test(vinCode)
+  }
+
+  const searchVin = async (vinCode: string) => {
+    if (!vinCode || vinCode.length !== 17) {
+      toast({
+        title: "Invalid VIN",
+        description: "VIN must be exactly 17 characters long",
+        variant: "destructive"
+      })
+      return
     }
-    const data = await response.json();
-    console.log(`[check-vin] Raw data from EXTERNAL NHTSA API for ${vin}:`, JSON.stringify(data, null, 2));
-    return data;
-  } catch (error) {
-    console.error(`[check-vin] Failed to fetch VIN data from EXTERNAL NHTSA API for ${vin}:`, error);
-    return null;
-  }
-}
 
-export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const vin = searchParams.get('vin');
+    if (!validateVin(vinCode)) {
+      toast({
+        title: "Invalid VIN Format",
+        description: "VIN contains invalid characters. Only letters (except I, O, Q) and numbers are allowed.",
+        variant: "destructive"
+      })
+      return
+    }
 
-  if (!vin) {
-    return NextResponse.json({ error: 'VIN parameter is missing' }, { status: 400 });
-  }
+    setIsLoading(true)
+    setLastSearchedVin(vinCode.toUpperCase())
 
-  console.log(`[check-vin] Received VIN for check: ${vin}`);
+    try {
+      console.log(`[SmartVinInput] Searching for VIN: ${vinCode}`)
+      
+      // Llamar a la API de check-vin
+      const response = await fetch(`/api/vehicles/check-vin?vin=${encodeURIComponent(vinCode.toUpperCase())}`)
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to search VIN')
+      }
 
-  try {
-    // 1. Intentar encontrar el VIN en tu base de datos
-    const vehicleData = await findVehicleByVinInDatabase(vin);
+      const result = await response.json()
+      console.log(`[SmartVinInput] Search result:`, result)
 
-    if (vehicleData) {
-      console.log(`[check-vin] VIN ${vin} found in database. Returning existing data.`);
-      return NextResponse.json({
-        vin,
-        found: true,
-        message: `VIN ${vin} already exists in your system.`,
-        data: vehicleData
-      });
-    } else {
-      // 2. Si no se encuentra en la base de datos, intentar decodificarlo con NHTSA
-      console.log(`[check-vin] VIN ${vin} not found in database. Attempting NHTSA decode...`);
-      const nhtsaData = await fetchVinDataFromNHTSAApi(vin);
+      setSearchResult(result)
 
-      // Ajuste clave aquí: Verificar que haya resultados y que el ErrorCode sea 0
-      // No necesitamos que el ErrorCode sea el primer elemento.
-      const hasValidResults = nhtsaData && nhtsaData.Results && nhtsaData.Results.length > 0 &&
-                             nhtsaData.Results.some((r: any) => r.Variable === 'Error Code' && r.Value === '0');
-
-      if (hasValidResults) {
-        console.log(`[check-vin] VIN ${vin} decoded successfully by NHTSA. Processing results.`);
-        const decodedInfo: { [key: string]: string | number | null } = {}; // Usar un tipo más específico
-
-        // Iterar sobre todos los resultados y procesarlos
-        nhtsaData.Results.forEach((item: any) => {
-          if (item.Value && item.Variable) {
-            const key = item.Variable.replace(/[^a-zA-Z0-9]/g, ''); // Elimina caracteres no alfanuméricos
-            const camelCaseKey = key.charAt(0).toLowerCase() + key.slice(1); // Convierte a camelCase
-
-            // Intentar convertir a número si es un campo numérico conocido
-            if (['modelYear', 'engineNumberofCylinders', 'displacementCC', 'displacementCI', 'displacementL', 'engineBrakeHpFrom', 'engineBrakeHpTo'].includes(camelCaseKey)) {
-              const numValue = parseFloat(item.Value);
-              if (!isNaN(numValue)) {
-                decodedInfo[camelCaseKey] = numValue;
-              } else {
-                decodedInfo[camelCaseKey] = item.Value;
-              }
-            } else {
-              decodedInfo[camelCaseKey] = item.Value;
-            }
-          }
-        });
-
-        // Puedes seguir extrayendo campos comunes si quieres un acceso más directo,
-        // pero `decodedInfo` ya contendrá todos los datos procesados.
-        // Por ejemplo, para asegurar que 'make' y 'model' estén en la raíz del objeto de datos:
-        const finalData = {
-          vin,
-          make: decodedInfo.make || null,
-          model: decodedInfo.model || null,
-          modelYear: decodedInfo.modelYear || null,
-          bodyClass: decodedInfo.bodyClass || null,
-          vehicleType: decodedInfo.vehicleType || null,
-          engineCylinders: decodedInfo.engineNumberofCylinders || null, // Corregido el nombre de la variable
-          fuelType: decodedInfo.fuelTypePrimary || null, // Corregido el nombre de la variable
-          plantCountry: decodedInfo.plantCountry || null,
-          source: 'nhtsa_api',
-          // Añade todos los demás campos decodificados
-          ...decodedInfo
-        };
-
-        return NextResponse.json({
-          vin,
-          found: false,
-          message: `VIN ${vin} is new. Decoded info from NHTSA available.`,
-          data: finalData
-        });
+      if (result.found && result.data) {
+        // VIN encontrado en la base de datos
+        toast({
+          title: "Vehicle Found",
+          description: result.message,
+          variant: "default"
+        })
+        onVehicleDataFound(result.data, 'database')
+      } else if (!result.found && result.data) {
+        // VIN no encontrado en BD pero decodificado por NHTSA
+        toast({
+          title: "New Vehicle",
+          description: result.message,
+          variant: "default"
+        })
+        onVehicleDataFound(result.data, 'nhtsa')
       } else {
-        console.log(`[check-vin] VIN ${vin} not found in database and no valid decode information from NHTSA.`);
-        return NextResponse.json({
-          vin,
-          found: false,
-          message: `VIN ${vin} is new, but no decode information available from NHTSA.`,
-          data: null
-        });
+        // VIN no encontrado y no se pudo decodificar
+        toast({
+          title: "VIN Not Found",
+          description: result.message || "No information available for this VIN",
+          variant: "destructive"
+        })
+        setSearchResult(result)
+      }
+
+    } catch (error) {
+      console.error('Error searching VIN:', error)
+      toast({
+        title: "Search Error",
+        description: error instanceof Error ? error.message : "Failed to search VIN",
+        variant: "destructive"
+      })
+      setSearchResult(null)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleVinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, '')
+    if (value.length <= 17) {
+      setVin(value)
+      // Limpiar resultado anterior si el VIN cambia
+      if (value !== lastSearchedVin) {
+        setSearchResult(null)
       }
     }
-  } catch (error: any) {
-    console.error('[check-vin] Error during VIN check process:', error);
-    return NextResponse.json({ error: 'Failed to process VIN check', details: error.message }, { status: 500 });
   }
+
+  const handleSearch = () => {
+    if (vin.trim()) {
+      searchVin(vin.trim())
+    }
+  }
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && vin.trim() && !isLoading) {
+      handleSearch()
+    }
+  }
+
+  const handleScanResult = (scannedVin: string) => {
+    console.log(`[SmartVinInput] Scanned VIN: ${scannedVin}`)
+    setVin(scannedVin.toUpperCase())
+    setShowScanner(false)
+    // Auto-search después de escanear
+    setTimeout(() => {
+      searchVin(scannedVin)
+    }, 500)
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center space-x-2">
+          <Search className="w-5 h-5" />
+          <span>VIN Lookup</span>
+        </CardTitle>
+        <CardDescription>
+          Enter or scan a VIN to search for vehicle information
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* VIN Input */}
+        <div className="space-y-2">
+          <Label htmlFor="vin-input">Vehicle Identification Number (VIN)</Label>
+          <div className="flex space-x-2">
+            <div className="flex-1 relative">
+              <Input
+                id="vin-input"
+                placeholder="Enter 17-character VIN"
+                value={vin}
+                onChange={handleVinChange}
+                onKeyPress={handleKeyPress}
+                className="font-mono uppercase pr-12"
+                maxLength={17}
+                disabled={disabled || isLoading}
+              />
+              <div className="absolute right-3 top-3 text-xs text-gray-500">
+                {vin.length}/17
+              </div>
+            </div>
+            <Button
+              onClick={handleSearch}
+              disabled={!vin.trim() || vin.length !== 17 || isLoading || disabled}
+              size="default"
+            >
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Search className="w-4 h-4" />
+              )}
+            </Button>
+          </div>
+        </div>
+
+        {/* Scanner Button */}
+        <div className="flex justify-center">
+          <Button
+            variant="outline"
+            onClick={() => setShowScanner(!showScanner)}
+            disabled={disabled || isLoading}
+            className="w-full"
+          >
+            <Camera className="w-4 h-4 mr-2" />
+            {showScanner ? 'Hide Scanner' : 'Scan VIN Code'}
+          </Button>
+        </div>
+
+        {/* Scanner Component */}
+        {showScanner && (
+          <div className="border rounded-lg p-4">
+            <VinScanner
+              onScanResult={handleScanResult}
+              onError={(error) => {
+                console.error('Scanner error:', error)
+                toast({
+                  title: "Scanner Error",
+                  description: error,
+                  variant: "destructive"
+                })
+              }}
+            />
+          </div>
+        )}
+
+        {/* Search Results */}
+        {searchResult && (
+          <div className="space-y-2">
+            {searchResult.found ? (
+              <Alert className="border-green-200 bg-green-50">
+                <CheckCircle className="w-4 h-4" />
+                <AlertDescription>
+                  <strong>Vehicle Found!</strong> {searchResult.message}
+                  {searchResult.data?.client && (
+                    <div className="mt-1">
+                      Owner: <strong>{searchResult.data.client.name}</strong>
+                    </div>
+                  )}
+                </AlertDescription>
+              </Alert>
+            ) : searchResult.data ? (
+              <Alert className="border-blue-200 bg-blue-50">
+                <AlertDescription>
+                  <strong>New Vehicle</strong> - {searchResult.message}
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <Alert className="border-yellow-200 bg-yellow-50">
+                <AlertTriangle className="w-4 h-4" />
+                <AlertDescription>
+                  <strong>No Information Found</strong> - {searchResult.message}
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+        )}
+
+        {/* VIN Validation Helper */}
+        {vin && vin.length > 0 && vin.length < 17 && (
+          <div className="text-sm text-gray-500">
+            VIN must be exactly 17 characters long
+          </div>
+        )}
+
+        {vin && vin.length === 17 && !validateVin(vin) && (
+          <Alert className="border-red-200 bg-red-50">
+            <AlertTriangle className="w-4 h-4" />
+            <AlertDescription>
+              Invalid VIN format. VIN cannot contain the letters I, O, or Q.
+            </AlertDescription>
+          </Alert>
+        )}
+      </CardContent>
+    </Card>
+  )
 }

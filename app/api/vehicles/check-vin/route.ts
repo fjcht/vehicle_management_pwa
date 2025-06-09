@@ -1,22 +1,60 @@
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/app/lib/auth';
+import { prisma } from '@/app/lib/db';
 
-// Suponiendo que tienes una forma de interactuar con tu base de datos
-// Esto es un placeholder. Reemplázalo con tu ORM, cliente de DB, etc.
-async function findVehicleByVinInDatabase(vin: string) {
-  // --- REEMPLAZA ESTA LÓGICA CON TU CONSULTA REAL A LA BASE DE DATOS ---
-  const mockDatabase = [
-    { vin: 'WP0AA29963S620150', make: 'Porsche', model: '911', year: 2015, color: 'Red', source: 'database' },
-    { vin: '2GCEK19T741344731', make: 'Chevrolet', model: 'Silverado', year: 2004, color: 'Blue', source: 'database' },
-    // Añade el VIN que estás probando manualmente aquí para simular que no está en la DB
-    // y forzar la llamada a NHTSA.
-    // { vin: 'WP0CA29941S650320', make: 'Simulated', model: 'Test', year: 2023, source: 'database' },
-  ];
+// Función para buscar vehículo en la base de datos usando Prisma
+async function findVehicleByVinInDatabase(vin: string, companyId: string) {
+  try {
+    const vehicle = await prisma.vehicle.findFirst({
+      where: {
+        vin: vin,
+        companyId: companyId
+      },
+      include: {
+        client: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+            email: true
+          }
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      }
+    });
 
-  const foundVehicle = mockDatabase.find(v => v.vin === vin);
-  return foundVehicle || null;
-  // --- FIN DEL REEMPLAZO ---
+    if (vehicle) {
+      return {
+        id: vehicle.id,
+        vin: vehicle.vin,
+        licensePlate: vehicle.licensePlate,
+        make: vehicle.make,
+        model: vehicle.model,
+        year: vehicle.year,
+        color: vehicle.color,
+        engineType: vehicle.engineType,
+        transmission: vehicle.transmission,
+        fuelType: vehicle.fuelType,
+        mileage: vehicle.mileage,
+        parkingSpot: vehicle.parkingSpot,
+        client: vehicle.client,
+        assignedTo: vehicle.assignedTo,
+        source: 'database'
+      };
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error querying database for VIN:', error);
+    return null;
+  }
 }
-
 
 // Función para llamar DIRECTAMENTE a la API externa de NHTSA
 async function fetchVinDataFromNHTSAApi(vin: string) {
@@ -49,11 +87,22 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'VIN parameter is missing' }, { status: 400 });
   }
 
+  if (vin.length !== 17) {
+    return NextResponse.json({ error: 'Invalid VIN format. VIN must be 17 characters.' }, { status: 400 });
+  }
+
   console.log(`[check-vin] Received VIN for check: ${vin}`);
 
   try {
+    // Verificar autenticación
+    const session = await getServerSession(authOptions);
+    
+    if (!session?.user?.companyId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     // 1. Intentar encontrar el VIN en tu base de datos
-    const vehicleData = await findVehicleByVinInDatabase(vin);
+    const vehicleData = await findVehicleByVinInDatabase(vin.toUpperCase(), session.user.companyId);
 
     if (vehicleData) {
       console.log(`[check-vin] VIN ${vin} found in database. Returning existing data.`);
@@ -66,22 +115,21 @@ export async function GET(request: Request) {
     } else {
       // 2. Si no se encuentra en la base de datos, intentar decodificarlo con NHTSA
       console.log(`[check-vin] VIN ${vin} not found in database. Attempting NHTSA decode...`);
-      const nhtsaData = await fetchVinDataFromNHTSAApi(vin);
+      const nhtsaData = await fetchVinDataFromNHTSAApi(vin.toUpperCase());
 
-      // Ajuste clave aquí: Verificar que haya resultados y que el ErrorCode sea 0
-      // No necesitamos que el ErrorCode sea el primer elemento.
+      // Verificar que haya resultados válidos y que el ErrorCode sea 0
       const hasValidResults = nhtsaData && nhtsaData.Results && nhtsaData.Results.length > 0 &&
-                             nhtsaData.Results.some((r: any) => r.Variable === 'Error Code' && r.Value === '0');
+        nhtsaData.Results.some((r: any) => r.Variable === 'Error Code' && r.Value === '0');
 
       if (hasValidResults) {
         console.log(`[check-vin] VIN ${vin} decoded successfully by NHTSA. Processing results.`);
-        const decodedInfo: { [key: string]: string | number | null } = {}; // Usar un tipo más específico
+        const decodedInfo: { [key: string]: string | number | null } = {};
 
         // Iterar sobre todos los resultados y procesarlos
         nhtsaData.Results.forEach((item: any) => {
-          if (item.Value && item.Variable) {
-            const key = item.Variable.replace(/[^a-zA-Z0-9]/g, ''); // Elimina caracteres no alfanuméricos
-            const camelCaseKey = key.charAt(0).toLowerCase() + key.slice(1); // Convierte a camelCase
+          if (item.Value && item.Variable && item.Value !== 'Not Applicable' && item.Value !== '') {
+            const key = item.Variable.replace(/[^a-zA-Z0-9]/g, '');
+            const camelCaseKey = key.charAt(0).toLowerCase() + key.slice(1);
 
             // Intentar convertir a número si es un campo numérico conocido
             if (['modelYear', 'engineNumberofCylinders', 'displacementCC', 'displacementCI', 'displacementL', 'engineBrakeHpFrom', 'engineBrakeHpTo'].includes(camelCaseKey)) {
@@ -97,22 +145,22 @@ export async function GET(request: Request) {
           }
         });
 
-        // Puedes seguir extrayendo campos comunes si quieres un acceso más directo,
-        // pero `decodedInfo` ya contendrá todos los datos procesados.
-        // Por ejemplo, para asegurar que 'make' y 'model' estén en la raíz del objeto de datos:
+        // Mapear campos de NHTSA a campos de tu base de datos
         const finalData = {
-          vin,
+          vin: vin.toUpperCase(),
           make: decodedInfo.make || null,
           model: decodedInfo.model || null,
-          modelYear: decodedInfo.modelYear || null,
+          year: decodedInfo.modelYear || null,
+          engineType: decodedInfo.engineModel || null,
+          transmission: decodedInfo.transmissionStyle || null,
+          fuelType: decodedInfo.fuelTypePrimary || null,
           bodyClass: decodedInfo.bodyClass || null,
           vehicleType: decodedInfo.vehicleType || null,
-          engineCylinders: decodedInfo.engineNumberofCylinders || null, // Corregido el nombre de la variable
-          fuelType: decodedInfo.fuelTypePrimary || null, // Corregido el nombre de la variable
+          driveType: decodedInfo.driveType || null,
           plantCountry: decodedInfo.plantCountry || null,
           source: 'nhtsa_api',
-          // Añade todos los demás campos decodificados
-          ...decodedInfo
+          // Incluir todos los demás campos decodificados
+          nhtsaData: decodedInfo
         };
 
         return NextResponse.json({
@@ -133,6 +181,9 @@ export async function GET(request: Request) {
     }
   } catch (error: any) {
     console.error('[check-vin] Error during VIN check process:', error);
-    return NextResponse.json({ error: 'Failed to process VIN check', details: error.message }, { status: 500 });
+    return NextResponse.json({ 
+      error: 'Failed to process VIN check', 
+      details: error.message 
+    }, { status: 500 });
   }
 }

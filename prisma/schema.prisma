@@ -1,4 +1,3 @@
-
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
@@ -9,23 +8,23 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url    = env("DATABASE_URL")
 }
 
 // Multi-company structure
 model Company {
-  id        String   @id @default(cuid())
-  name      String
-  email     String   @unique
-  phone     String?
+  id    String   @id @default(cuid())
+  name    String
+  email    String   @unique
+  phone    String?
   address   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
-  users        User[]
-  clients      Client[]
-  vehicles     Vehicle[]
+  users    User[]
+  clients    Client[]
+  vehicles    Vehicle[]
   repairOrders RepairOrder[]
   appointments Appointment[]
 
@@ -34,18 +33,18 @@ model Company {
 
 // NextAuth.js required models
 model Account {
-  id                String  @id @default(cuid())
-  userId            String
-  type              String
-  provider          String
+  id    String  @id @default(cuid())
+  userId    String
+  type    String
+  provider    String
   providerAccountId String
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
-  expires_at        Int?
-  token_type        String?
-  scope             String?
-  id_token          String? @db.Text
-  session_state     String?
+  refresh_token    String? @db.Text
+  access_token    String? @db.Text
+  expires_at    Int?
+  token_type    String?
+  scope    String?
+  id_token    String? @db.Text
+  session_state    String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -54,42 +53,42 @@ model Account {
 }
 
 model Session {
-  id           String   @id @default(cuid())
+  id    String   @id @default(cuid())
   sessionToken String   @unique
-  userId       String
-  expires      DateTime
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  expires    DateTime
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("sessions")
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String    @unique
+  id    String    @id @default(cuid())
+  name    String?
+  email    String    @unique
   emailVerified DateTime?
-  image         String?
-  password      String?
-  role          UserRole  @default(EMPLOYEE)
-  companyId     String
-  isActive      Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  image    String?
+  password    String?
+  role    UserRole  @default(EMPLOYEE)
+  companyId    String
+  isActive    Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   // Relations
-  company           Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  accounts          Account[]
-  sessions          Session[]
-  assignedVehicles  Vehicle[]     @relation("AssignedEmployee")
-  repairOrders      RepairOrder[] @relation("AssignedEmployee")
-  repairLogs        RepairLog[]
+  company    Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  accounts    Account[]
+  sessions    Session[]
+  assignedVehicles  Vehicle[]    @relation("AssignedEmployee")
+  repairOrders    RepairOrder[] @relation("AssignedEmployee")
+  repairLogs    RepairLog[]
 
   @@map("users")
 }
 
 model VerificationToken {
   identifier String
-  token      String   @unique
+  token    String   @unique
   expires    DateTime
 
   @@unique([identifier, token])
@@ -103,18 +102,18 @@ enum UserRole {
 
 // Core workshop models
 model Client {
-  id        String   @id @default(cuid())
-  name      String
-  email     String?
-  phone     String
+  id    String   @id @default(cuid())
+  name    String
+  email    String?
+  phone    String
   address   String?
   companyId String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relations
-  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  vehicles     Vehicle[]
+  company    Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  vehicles    Vehicle[]
   repairOrders RepairOrder[]
   appointments Appointment[]
 
@@ -122,28 +121,28 @@ model Client {
 }
 
 model Vehicle {
-  id               String   @id @default(cuid())
-  vin              String?  @unique
-  licensePlate     String
-  make             String?
-  model            String?
-  year             Int?
-  color            String?
-  engineType       String?
-  transmission     String?
-  fuelType         String?
-  mileage          Int?
-  clientId         String?
-  companyId        String
-  assignedToId     String?
-  parkingSpot      String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id    String   @id @default(cuid())
+  vin    String?  @unique
+  licensePlate    String
+  make    String?
+  model    String?
+  year    Int?
+  color    String?
+  engineType    String?
+  transmission    String?
+  fuelType    String?
+  mileage    Int?
+  clientId    String?
+  companyId    String
+  assignedToId    String?
+  parkingSpot    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   // Relations
-  client       Client?       @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  assignedTo   User?         @relation("AssignedEmployee", fields: [assignedToId], references: [id])
+  client    Client?    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  company    Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  assignedTo   User?    @relation("AssignedEmployee", fields: [assignedToId], references: [id])
   repairOrders RepairOrder[]
   appointments Appointment[]
 
@@ -151,64 +150,64 @@ model Vehicle {
 }
 
 model RepairOrder {
-  id               String            @id @default(cuid())
-  orderNumber      String            @unique
-  clientId         String?
-  vehicleId        String
-  companyId        String
-  assignedToId     String?
-  problem          String
-  diagnosis        String?
+  id    String    @id @default(cuid())
+  orderNumber    String    @unique
+  clientId    String?
+  vehicleId    String
+  companyId    String
+  assignedToId    String?
+  problem    String
+  diagnosis    String?
   estimatedCost    Float?
-  finalCost        Float?
-  status           RepairOrderStatus @default(RECEPTION)
-  parkingSpot      String?
-  receptionDate    DateTime          @default(now())
+  finalCost    Float?
+  status    RepairOrderStatus @default(RECEPTION)
+  parkingSpot    String?
+  receptionDate    DateTime    @default(now())
   estimatedEndDate DateTime?
   completedDate    DateTime?
   deliveredDate    DateTime?
-  notes            String?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  notes    String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 
   // Relations
-  client     Client?     @relation(fields: [clientId], references: [id], onDelete: Cascade)
-  vehicle    Vehicle     @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-  company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  assignedTo User?       @relation("AssignedEmployee", fields: [assignedToId], references: [id])
-  logs       RepairLog[]
+  client    Client?    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  vehicle    Vehicle    @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  company    Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  assignedTo User?    @relation("AssignedEmployee", fields: [assignedToId], references: [id])
+  logs    RepairLog[]
 
   @@map("repair_orders")
 }
 
 model RepairLog {
-  id            String            @id @default(cuid())
+  id    String    @id @default(cuid())
   repairOrderId String
-  userId        String
+  userId    String
   previousStatus RepairOrderStatus?
-  newStatus     RepairOrderStatus
-  notes         String?
-  timestamp     DateTime          @default(now())
+  newStatus    RepairOrderStatus
+  notes    String?
+  timestamp    DateTime    @default(now())
 
   // Relations
   repairOrder RepairOrder @relation(fields: [repairOrderId], references: [id], onDelete: Cascade)
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("repair_logs")
 }
 
 model Appointment {
-  id          String            @id @default(cuid())
+  id    String    @id @default(cuid())
   clientId    String?
   vehicleId   String?
   companyId   String
-  title       String
+  title    String
   description String?
   startTime   DateTime
-  endTime     DateTime
-  status      AppointmentStatus @default(SCHEDULED)
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  endTime    DateTime
+  status    AppointmentStatus @default(SCHEDULED)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 
   // Relations
   client  Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -219,12 +218,12 @@ model Appointment {
 }
 
 enum RepairOrderStatus {
-  RECEPTION      // Recepción
-  DIAGNOSIS      // Diagnóstico
+  RECEPTION    // Recepción
+  DIAGNOSIS    // Diagnóstico
   WAITING_PARTS  // Esperando Repuestos
-  IN_REPAIR      // En Reparación
-  READY          // Listo
-  DELIVERED      // Entregado
+  IN_REPAIR    // En Reparación
+  READY    // Listo
+  DELIVERED    // Entregado
 }
 
 enum AppointmentStatus {
