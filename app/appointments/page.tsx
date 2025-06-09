@@ -4,12 +4,12 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Plus, Search, Calendar, Clock, User, Car, Phone, Edit, Trash2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { useToast } from '@/hooks/use-toast'
+import { Button } from '@/app/components/ui/button'
+import { Input } from '@/app/components/ui/input'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card'
+import { Badge } from '@/app/components/ui/badge'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select'
+import { useToast } from '@/app/hooks/use-toast'
 import Link from 'next/link'
 
 interface Appointment {
