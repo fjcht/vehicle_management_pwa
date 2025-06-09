@@ -1,10 +1,10 @@
 'use client' // Asegúrate de que esta línea esté presente si usas hooks o APIs del navegador
 
 import { useState } from 'react'
-import { VinScanner } from '@/components/vin-scanner'
-import { NHTSAVehicleData } from '@/lib/nhtsa'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { VinScanner } from '@/app/components/vin-scanner'
+import { NHTSAVehicleData } from '@/app/lib/nhtsa'
+import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card'
+import { Button } from '@/app/components/ui/button'
 import { ArrowLeft } from 'lucide-react'
 
 export default function HomePage() {

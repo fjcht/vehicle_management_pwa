@@ -18,11 +18,11 @@ import {
   Activity,
   Clock
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
-import { useToast } from '@/hooks/use-toast'
+import { Button } from '@/app/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card'
+import { Badge } from '@/app/components/ui/badge'
+import { Separator } from '@/app/components/ui/separator'
+import { useToast } from '@/app/hooks/use-toast'
 import Link from 'next/link'
 
 interface Employee {

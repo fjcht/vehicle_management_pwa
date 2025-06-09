@@ -1,8 +1,8 @@
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
-import { ThemeProvider } from '@/components/theme-provider'
-import { Toaster } from '@/components/ui/toaster'
+import { ThemeProvider } from '@/app/components/theme-provider'
+import { Toaster } from '@/app/components/ui/toaster'
 import { SessionProvider } from 'next-auth/react' // Importar SessionProvider
 import { auth } from 'next-auth'
 
