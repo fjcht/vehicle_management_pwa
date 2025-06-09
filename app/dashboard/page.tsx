@@ -12,17 +12,12 @@ import {
   Clock,
   CheckCircle,
   AlertCircle,
-  DollarSign,
-  Plus
+  DollarSign
 } from 'lucide-react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card'
-import { Badge } from '@/app/components/ui/badge'
-import { Button } from '@/app/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/app/components/ui/dialog'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import Link from 'next/link'
-
-// Importar el componente SmartVinInput
-import SmartVinInput from '@/app/components/SmartVinInput'
 
 interface DashboardStats {
   totalVehicles: number
@@ -71,45 +66,10 @@ const statusColors = {
   DELIVERED: 'bg-gray-100 text-gray-800'
 }
 
-// Componente de demo para el VIN Scanner (reemplazar con el real)
-function QuickVinScanner({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const [vin, setVin] = useState('')
-  
-  return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Quick VIN Scanner</DialogTitle>
-          <DialogDescription>
-            Scan or enter a VIN to quickly add a vehicle
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4">
-          {/* Aquí iría tu SmartVinInput component */}
-          <div className="p-4 border-2 border-dashed border-gray-300 rounded-lg text-center">
-            <Car className="mx-auto h-12 w-12 text-gray-400 mb-2" />
-            <p className="text-sm text-gray-500">VIN Scanner would be integrated here</p>
-            <p className="text-xs text-gray-400 mt-1">Replace with actual SmartVinInput component</p>
-          </div>
-          <div className="flex gap-2">
-            <Button onClick={onClose} variant="outline" className="flex-1">
-              Cancel
-            </Button>
-            <Button className="flex-1">
-              Add Vehicle
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 export default function DashboardPage() {
   const { data: session } = useSession()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [showVinScanner, setShowVinScanner] = useState(false)
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -157,23 +117,12 @@ export default function DashboardPage() {
           animate={{ opacity: 1, y: 0 }}
           className="space-y-2"
         >
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-4xl font-bold text-gray-900">
-                Welcome back, {session?.user.name || 'User'}!
-              </h1>
-              <p className="text-xl text-gray-600">
-                Here's what's happening at {session?.user.companyName} today.
-              </p>
-            </div>
-            <Button 
-              onClick={() => setShowVinScanner(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white shadow-lg"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Quick VIN Scan
-            </Button>
-          </div>
+          <h1 className="text-4xl font-bold text-gray-900">
+            Welcome back, {session?.user.name || 'User'}!
+          </h1>
+          <p className="text-xl text-gray-600">
+            Here's what's happening at {session?.user.companyName} today.
+          </p>
         </motion.div>
 
         {/* Stats Cards */}
@@ -371,17 +320,14 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <Button 
-                  onClick={() => setShowVinScanner(true)}
-                  variant="outline" 
-                  className="w-full h-20 flex flex-col space-y-2 border-0 bg-gradient-to-br from-blue-50 to-blue-100 backdrop-blur-sm shadow-sm hover:shadow-md hover:from-blue-100 hover:to-blue-200 transition-all duration-200"
-                >
-                  <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
-                    <Car className="w-4 h-4 text-white" />
-                  </div>
-                  <span className="text-blue-700 font-medium">Scan VIN</span>
-                </Button>
-                
+                <Link href="/vehicles/new">
+                  <Button variant="outline" className="w-full h-20 flex flex-col space-y-2 border-0 bg-white/50 backdrop-blur-sm shadow-sm hover:shadow-md hover:bg-white/70 transition-all duration-200">
+                    <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                      <Car className="w-4 h-4 text-blue-600" />
+                    </div>
+                    <span className="text-gray-700 font-medium">Add Vehicle</span>
+                  </Button>
+                </Link>
                 <Link href="/clients/new">
                   <Button variant="outline" className="w-full h-20 flex flex-col space-y-2 border-0 bg-white/50 backdrop-blur-sm shadow-sm hover:shadow-md hover:bg-white/70 transition-all duration-200">
                     <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
@@ -390,7 +336,6 @@ export default function DashboardPage() {
                     <span className="text-gray-700 font-medium">Add Client</span>
                   </Button>
                 </Link>
-                
                 <Link href="/repairs/new">
                   <Button variant="outline" className="w-full h-20 flex flex-col space-y-2 border-0 bg-white/50 backdrop-blur-sm shadow-sm hover:shadow-md hover:bg-white/70 transition-all duration-200">
                     <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center">
@@ -399,7 +344,6 @@ export default function DashboardPage() {
                     <span className="text-gray-700 font-medium">New Repair</span>
                   </Button>
                 </Link>
-                
                 <Link href="/appointments/new">
                   <Button variant="outline" className="w-full h-20 flex flex-col space-y-2 border-0 bg-white/50 backdrop-blur-sm shadow-sm hover:shadow-md hover:bg-white/70 transition-all duration-200">
                     <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center">
@@ -413,12 +357,6 @@ export default function DashboardPage() {
           </Card>
         </motion.div>
       </div>
-
-      {/* Quick VIN Scanner Modal */}
-      <QuickVinScanner 
-        isOpen={showVinScanner} 
-        onClose={() => setShowVinScanner(false)} 
-      />
     </div>
   )
 }
