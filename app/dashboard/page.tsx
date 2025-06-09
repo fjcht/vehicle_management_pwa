@@ -1,339 +1,224 @@
+'use client';
 
-'use client'
+import { useState, useEffect } from 'react';
+import SmartVinInput from '@/app/components/smart-vin-input';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
-import { useState, useEffect } from 'react'
-import { useSession } from 'next-auth/react'
-import { motion } from 'framer-motion'
-import { 
-  Car, 
-  Users, 
-  Wrench, 
-  Calendar, 
-  TrendingUp, 
-  Clock,
-  CheckCircle,
-  AlertCircle,
-  DollarSign
-} from 'lucide-react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card'
-import { Badge } from '@/app/components/ui/badge'
-import { Button } from '@/app/components/ui/button'
-import Link from 'next/link'
+// Función simulada para decodificar el VIN
+// En un entorno real, esto sería una llamada a una API externa
+const decodeVin = (vin: string) => {
+  // Simulación de datos de decodificación
+  const decodedData: { [key: string]: { make: string; model: string; year: string; color: string } } = {
+    '1234567890ABCDEFGH': { make: 'Toyota', model: 'Camry', year: '2023', color: 'Negro' },
+    'ABCDEFGHIJKLMN1234': { make: 'Honda', model: 'Civic', year: '2022', color: 'Blanco' },
+    'XYZ1234567890ABCD': { make: 'Ford', model: 'F-150', year: '2024', color: 'Rojo' },
+    // Puedes añadir más VINs de ejemplo aquí
+  };
 
-interface DashboardStats {
-  totalVehicles: number
-  totalClients: number
-  activeRepairs: number
-  todayAppointments: number
-  recentRepairs: Array<{
-    id: string
-    orderNumber: string
-    vehicle: {
-      licensePlate: string
-      make?: string
-      model?: string
-    }
-    client?: {
-      name: string
-    } | null
-    status: string
-    receptionDate: string
-  }>
-  statusCounts: {
-    RECEPTION: number
-    DIAGNOSIS: number
-    WAITING_PARTS: number
-    IN_REPAIR: number
-    READY: number
-    DELIVERED: number
-  }
-}
-
-const statusLabels = {
-  RECEPTION: 'Reception',
-  DIAGNOSIS: 'Diagnosis',
-  WAITING_PARTS: 'Waiting Parts',
-  IN_REPAIR: 'In Repair',
-  READY: 'Ready',
-  DELIVERED: 'Delivered'
-}
-
-const statusColors = {
-  RECEPTION: 'bg-blue-100 text-blue-800',
-  DIAGNOSIS: 'bg-yellow-100 text-yellow-800',
-  WAITING_PARTS: 'bg-orange-100 text-orange-800',
-  IN_REPAIR: 'bg-purple-100 text-purple-800',
-  READY: 'bg-green-100 text-green-800',
-  DELIVERED: 'bg-gray-100 text-gray-800'
-}
+  return decodedData[vin.toUpperCase()] || null;
+};
 
 export default function DashboardPage() {
-  const { data: session } = useSession()
-  const [stats, setStats] = useState<DashboardStats | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  const [vin, setVin] = useState('');
+  const [make, setMake] = useState('');
+  const [model, setModel] = useState('');
+  const [year, setYear] = useState('');
+  const [color, setColor] = useState('');
+  const [licensePlate, setLicensePlate] = useState('');
+  const [mileage, setMileage] = useState('');
+  const [lastServiceDate, setLastServiceDate] = useState('');
+  const [nextServiceDate, setNextServiceDate] = useState('');
+  const [notes, setNotes] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false); // Para manejar el estado de envío
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const response = await fetch('/api/dashboard/stats')
-        if (response.ok) {
-          const data = await response.json()
-          setStats(data)
-        }
-      } catch (error) {
-        console.error('Error fetching dashboard stats:', error)
-      } finally {
-        setIsLoading(false)
-      }
+  const handleVinChange = (newVin: string) => {
+    setVin(newVin);
+    // Lógica para decodificar el VIN y rellenar otros campos
+    const decodedInfo = decodeVin(newVin);
+    if (decodedInfo) {
+      setMake(decodedInfo.make);
+      setModel(decodedInfo.model);
+      setYear(decodedInfo.year);
+      setColor(decodedInfo.color);
+    } else {
+      // Si el VIN no se reconoce, puedes limpiar los campos o dejar que el usuario los rellene
+      // setMake('');
+      // setModel('');
+      // setYear('');
+      // setColor('');
     }
+  };
 
-    fetchStats()
-  }, [])
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true); // Deshabilita el botón mientras se envía
 
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {[...Array(4)].map((_, i) => (
-            <Card key={i} className="animate-pulse">
-              <CardHeader className="space-y-2">
-                <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                <div className="h-8 bg-gray-200 rounded w-1/2"></div>
-              </CardHeader>
-            </Card>
-          ))}
-        </div>
-      </div>
-    )
-  }
+    const vehicleData = {
+      vin,
+      make,
+      model,
+      year,
+      color,
+      licensePlate,
+      mileage: parseFloat(mileage), // Convertir a número
+      lastServiceDate,
+      nextServiceDate,
+      notes,
+    };
+
+    console.log('Intentando guardar vehículo:', vehicleData);
+
+    try {
+      // Aquí harías una llamada a tu API para guardar los datos
+      // Ejemplo con fetch API:
+      const response = await fetch('/api/vehicles', { // Asume que tienes una API en /api/vehicles
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(vehicleData),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Vehículo guardado con éxito:', result);
+        alert('Vehículo guardado con éxito!');
+        // Opcional: Limpiar el formulario después de un envío exitoso
+        setVin('');
+        setMake('');
+        setModel('');
+        setYear('');
+        setColor('');
+        setLicensePlate('');
+        setMileage('');
+        setLastServiceDate('');
+        setNextServiceDate('');
+        setNotes('');
+      } else {
+        const errorData = await response.json();
+        console.error('Error al guardar vehículo:', errorData);
+        alert(`Error al guardar vehículo: ${errorData.message || response.statusText}`);
+      }
+    } catch (error) {
+      console.error('Error de red o inesperado:', error);
+      alert('Ocurrió un error inesperado al guardar el vehículo.');
+    } finally {
+      setIsSubmitting(false); // Habilita el botón de nuevo
+    }
+  };
 
   return (
-    <div className="space-y-8">
-      {/* Welcome Header */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="space-y-2"
-      >
-        <h1 className="text-3xl font-bold text-gray-900">
-          Welcome back, {session?.user.name || 'User'}!
-        </h1>
-        <p className="text-gray-600">
-          Here's what's happening at {session?.user.companyName} today.
-        </p>
-      </motion.div>
+    <div className="container mx-auto p-4">
+      <h3 className="text-2xl font-bold mb-6">Añadir Nuevo Vehículo</h3>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <Label htmlFor="vin">VIN</Label>
+          <SmartVinInput id="vin" value={vin} onChange={handleVinChange} />
+        </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-        >
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Vehicles</CardTitle>
-              <Car className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats?.totalVehicles || 0}</div>
-              <p className="text-xs text-muted-foreground">
-                Vehicles in system
-              </p>
-            </CardContent>
-          </Card>
-        </motion.div>
+        <div>
+          <Label htmlFor="make">Marca</Label>
+          <Input
+            id="make"
+            type="text"
+            value={make}
+            onChange={(e) => setMake(e.target.value)}
+            placeholder="Ej: Toyota"
+          />
+        </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-        >
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Clients</CardTitle>
-              <Users className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats?.totalClients || 0}</div>
-              <p className="text-xs text-muted-foreground">
-                Registered clients
-              </p>
-            </CardContent>
-          </Card>
-        </motion.div>
+        <div>
+          <Label htmlFor="model">Modelo</Label>
+          <Input
+            id="model"
+            type="text"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder="Ej: Camry"
+          />
+        </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-        >
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Active Repairs</CardTitle>
-              <Wrench className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats?.activeRepairs || 0}</div>
-              <p className="text-xs text-muted-foreground">
-                In progress
-              </p>
-            </CardContent>
-          </Card>
-        </motion.div>
+        <div>
+          <Label htmlFor="year">Año</Label>
+          <Input
+            id="year"
+            type="number"
+            value={year}
+            onChange={(e) => setYear(e.target.value)}
+            placeholder="Ej: 2023"
+          />
+        </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-        >
-          <Card className="hover:shadow-lg transition-shadow">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Today's Appointments</CardTitle>
-              <Calendar className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats?.todayAppointments || 0}</div>
-              <p className="text-xs text-muted-foreground">
-                Scheduled today
-              </p>
-            </CardContent>
-          </Card>
-        </motion.div>
-      </div>
+        <div>
+          <Label htmlFor="color">Color</Label>
+          <Input
+            id="color"
+            type="text"
+            value={color}
+            onChange={(e) => setColor(e.target.value)}
+            placeholder="Ej: Negro"
+          />
+        </div>
 
-      {/* Repair Status Overview */}
-      {stats?.statusCounts && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5 }}
-        >
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <Wrench className="w-5 h-5" />
-                <span>Repair Status Overview</span>
-              </CardTitle>
-              <CardDescription>
-                Current status of all repair orders
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                {Object.entries(stats.statusCounts).map(([status, count]) => (
-                  <div key={status} className="text-center space-y-2">
-                    <div className="text-2xl font-bold">{count}</div>
-                    <Badge 
-                      variant="secondary" 
-                      className={statusColors[status as keyof typeof statusColors]}
-                    >
-                      {statusLabels[status as keyof typeof statusLabels]}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
-      )}
+        <div>
+          <Label htmlFor="licensePlate">Matrícula</Label>
+          <Input
+            id="licensePlate"
+            type="text"
+            value={licensePlate}
+            onChange={(e) => setLicensePlate(e.target.value)}
+            placeholder="Ej: ABC-123"
+          />
+        </div>
 
-      {/* Recent Repairs */}
-      {stats?.recentRepairs && stats.recentRepairs.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.6 }}
-        >
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="flex items-center space-x-2">
-                  <Clock className="w-5 h-5" />
-                  <span>Recent Repairs</span>
-                </CardTitle>
-                <CardDescription>
-                  Latest repair orders in your workshop
-                </CardDescription>
-              </div>
-              <Link href="/repairs">
-                <Button variant="outline" size="sm">
-                  View All
-                </Button>
-              </Link>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {stats.recentRepairs.slice(0, 5).map((repair) => (
-                  <div key={repair.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors">
-                    <div className="space-y-1">
-                      <div className="font-medium">
-                        {repair.orderNumber} - {repair.vehicle.licensePlate}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        {repair.client?.name || 'No client assigned'} • {repair.vehicle.make || 'Unknown'} {repair.vehicle.model || 'Model'}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {new Date(repair.receptionDate).toLocaleDateString()}
-                      </div>
-                    </div>
-                    <Badge 
-                      variant="secondary"
-                      className={statusColors[repair.status as keyof typeof statusColors]}
-                    >
-                      {statusLabels[repair.status as keyof typeof statusLabels]}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
-      )}
+        <div>
+          <Label htmlFor="mileage">Kilometraje</Label>
+          <Input
+            id="mileage"
+            type="number"
+            value={mileage}
+            onChange={(e) => setMileage(e.target.value)}
+            placeholder="Ej: 50000"
+          />
+        </div>
 
-      {/* Quick Actions */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.7 }}
-      >
-        <Card>
-          <CardHeader>
-            <CardTitle>Quick Actions</CardTitle>
-            <CardDescription>
-              Common tasks to get you started
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Link href="/vehicles/new">
-                <Button variant="outline" className="w-full h-20 flex flex-col space-y-2">
-                  <Car className="w-6 h-6" />
-                  <span>Add Vehicle</span>
-                </Button>
-              </Link>
-              <Link href="/clients/new">
-                <Button variant="outline" className="w-full h-20 flex flex-col space-y-2">
-                  <Users className="w-6 h-6" />
-                  <span>Add Client</span>
-                </Button>
-              </Link>
-              <Link href="/repairs/new">
-                <Button variant="outline" className="w-full h-20 flex flex-col space-y-2">
-                  <Wrench className="w-6 h-6" />
-                  <span>New Repair</span>
-                </Button>
-              </Link>
-              <Link href="/appointments/new">
-                <Button variant="outline" className="w-full h-20 flex flex-col space-y-2">
-                  <Calendar className="w-6 h-6" />
-                  <span>Schedule Appointment</span>
-                </Button>
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
-      </motion.div>
+        <div>
+          <Label htmlFor="lastServiceDate">Fecha Último Servicio</Label>
+          <Input
+            id="lastServiceDate"
+            type="date"
+            value={lastServiceDate}
+            onChange={(e) => setLastServiceDate(e.target.value)}
+          />
+        </div>
+
+        <div>
+          <Label htmlFor="nextServiceDate">Fecha Próximo Servicio</Label>
+          <Input
+            id="nextServiceDate"
+            type="date"
+            value={nextServiceDate}
+            onChange={(e) => setNextServiceDate(e.target.value)}
+          />
+        </div>
+
+        <div>
+          <Label htmlFor="notes">Notas</Label>
+          <Input
+            id="notes"
+            type="textarea" // Nota: Input de shadcn/ui no tiene type="textarea", deberías usar un <Textarea> si lo tienes. Si no, esto será un input de texto normal.
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Añade cualquier nota relevante aquí..."
+          />
+        </div>
+
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? 'Guardando...' : 'Guardar Vehículo'}
+        </Button>
+      </form>
     </div>
-  )
+  );
 }

@@ -1,178 +1,138 @@
-// app/dashboard/page.tsx (o la página donde tienes el formulario del vehículo)
-'use client'; // Asegúrate de que sea un Client Component si usas useState y eventos
+import { NextResponse } from 'next/server';
 
-import { useState, useEffect } from 'react';
-import SmartVinInput from '@/app/components/smart-vin-input'; // Asegúrate de la ruta correcta
-import { Button } from '@/app/components/ui/button'; // Si usas shadcn/ui
-import { Input } from '@/app/components/ui/input'; // Si usas shadcn/ui
-import { Label } from '@/app/components/ui/label'; // Si usas shadcn/ui
+// Suponiendo que tienes una forma de interactuar con tu base de datos
+// Esto es un placeholder. Reemplázalo con tu ORM, cliente de DB, etc.
+async function findVehicleByVinInDatabase(vin: string) {
+  // --- REEMPLAZA ESTA LÓGICA CON TU CONSULTA REAL A LA BASE DE DATOS ---
+  const mockDatabase = [
+    { vin: 'WP0AA29963S620150', make: 'Porsche', model: '911', year: 2015, color: 'Red', source: 'database' },
+    { vin: '2GCEK19T741344731', make: 'Chevrolet', model: 'Silverado', year: 2004, color: 'Blue', source: 'database' },
+    // Añade el VIN que estás probando manualmente aquí para simular que no está en la DB
+    // y forzar la llamada a NHTSA.
+    // { vin: 'WP0CA29941S650320', make: 'Simulated', model: 'Test', year: 2023, source: 'database' },
+  ];
 
-export default function DashboardPage() {
-  // 1. Estados para los campos del formulario del vehículo
-  const [vin, setVin] = useState<string>('');
-  const [make, setMake] = useState<string>('');
-  const [model, setModel] = useState<string>('');
-  const [modelYear, setModelYear] = useState<string>(''); // Usar string para input
-  const [bodyClass, setBodyClass] = useState<string>('');
-  const [vehicleType, setVehicleType] = useState<string>('');
-  const [engineCylinders, setEngineCylinders] = useState<string>('');
-  const [fuelType, setFuelType] = useState<string>('');
-  const [plantCountry, setPlantCountry] = useState<string>('');
-  const [statusMessage, setStatusMessage] = useState<string>('');
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const foundVehicle = mockDatabase.find(v => v.vin === vin);
+  return foundVehicle || null;
+  // --- FIN DEL REEMPLAZO ---
+}
 
-  // 2. Función para manejar el VIN detectado/introducido
-  const handleVinDetected = async (detectedVin: string) => {
-    setVin(detectedVin); // Actualiza el estado del VIN en el formulario
-    setStatusMessage('Verificando VIN...');
-    setIsLoading(true);
 
-    try {
-      const response = await fetch(`/api/vehicles/check-vin?vin=${detectedVin}`);
-      const result = await response.json(); // result.data contendrá la info decodificada
+// Función para llamar DIRECTAMENTE a la API externa de NHTSA
+async function fetchVinDataFromNHTSAApi(vin: string) {
+  const externalNHTSAUrl = `https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/${vin}?format=json`;
+  console.log(`[check-vin] Calling EXTERNAL NHTSA API: ${externalNHTSAUrl}`);
 
-      if (response.ok && result.data) {
-        console.log('Datos del vehículo recibidos:', result.data);
-        setStatusMessage(result.message);
+  try {
+    const response = await fetch(externalNHTSAUrl);
+    console.log(`[check-vin] EXTERNAL NHTSA API response status: ${response.status}`);
 
-        // 3. Rellenar los campos del formulario con los datos de la API
-        setMake(result.data.make || '');
-        setModel(result.data.model || '');
-        setModelYear(result.data.modelYear ? String(result.data.modelYear) : '');
-        setBodyClass(result.data.bodyClass || '');
-        setVehicleType(result.data.vehicleType || '');
-        setEngineCylinders(result.data.engineCylinders ? String(result.data.engineCylinders) : '');
-        setFuelType(result.data.fuelType || '');
-        setPlantCountry(result.data.plantCountry || '');
-
-        // Puedes añadir más campos aquí según lo que devuelva tu API y necesites
-        // Por ejemplo, si tu API devuelve 'doors', 'transmissionStyle', etc.
-        // setDoors(result.data.doors ? String(result.data.doors) : '');
-        // setTransmissionStyle(result.data.transmissionStyle || '');
-
-      } else {
-        console.error('Error o VIN no decodificado:', result.message);
-        setStatusMessage(result.message || 'No se pudo obtener información del VIN.');
-        // Opcional: Limpiar campos si el VIN no se decodificó o hubo un error
-        setMake('');
-        setModel('');
-        setModelYear('');
-        setBodyClass('');
-        setVehicleType('');
-        setEngineCylinders('');
-        setFuelType('');
-        setPlantCountry('');
-      }
-    } catch (error) {
-      console.error('Error al verificar el VIN:', error);
-      setStatusMessage('Error de red al verificar el VIN.');
-      setMake('');
-      setModel('');
-      setModelYear('');
-      setBodyClass('');
-      setVehicleType('');
-      setEngineCylinders('');
-      setFuelType('');
-      setPlantCountry('');
-    } finally {
-      setIsLoading(false);
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[check-vin] Error from EXTERNAL NHTSA API for VIN ${vin}: Status ${response.status}, Body: ${errorText}`);
+      return null;
     }
-  };
+    const data = await response.json();
+    console.log(`[check-vin] Raw data from EXTERNAL NHTSA API for ${vin}:`, JSON.stringify(data, null, 2));
+    return data;
+  } catch (error) {
+    console.error(`[check-vin] Failed to fetch VIN data from EXTERNAL NHTSA API for ${vin}:`, error);
+    return null;
+  }
+}
 
-  // Función para manejar el cambio manual del VIN en el input
-  const handleVinInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newVin = e.target.value.toUpperCase(); // Convertir a mayúsculas
-    setVin(newVin);
-    // Opcional: Si quieres que se verifique automáticamente al escribir,
-    // puedes llamar a handleVinDetected aquí con un debounce.
-    // Por ahora, lo haremos con un botón o al perder el foco.
-  };
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const vin = searchParams.get('vin');
 
-  // Función para verificar el VIN cuando se presiona un botón o se pierde el foco
-  const triggerVinCheck = () => {
-    if (vin) {
-      handleVinDetected(vin);
+  if (!vin) {
+    return NextResponse.json({ error: 'VIN parameter is missing' }, { status: 400 });
+  }
+
+  console.log(`[check-vin] Received VIN for check: ${vin}`);
+
+  try {
+    // 1. Intentar encontrar el VIN en tu base de datos
+    const vehicleData = await findVehicleByVinInDatabase(vin);
+
+    if (vehicleData) {
+      console.log(`[check-vin] VIN ${vin} found in database. Returning existing data.`);
+      return NextResponse.json({
+        vin,
+        found: true,
+        message: `VIN ${vin} already exists in your system.`,
+        data: vehicleData
+      });
     } else {
-      setStatusMessage('Por favor, introduce un VIN.');
+      // 2. Si no se encuentra en la base de datos, intentar decodificarlo con NHTSA
+      console.log(`[check-vin] VIN ${vin} not found in database. Attempting NHTSA decode...`);
+      const nhtsaData = await fetchVinDataFromNHTSAApi(vin);
+
+      // Ajuste clave aquí: Verificar que haya resultados y que el ErrorCode sea 0
+      // No necesitamos que el ErrorCode sea el primer elemento.
+      const hasValidResults = nhtsaData && nhtsaData.Results && nhtsaData.Results.length > 0 &&
+                             nhtsaData.Results.some((r: any) => r.Variable === 'Error Code' && r.Value === '0');
+
+      if (hasValidResults) {
+        console.log(`[check-vin] VIN ${vin} decoded successfully by NHTSA. Processing results.`);
+        const decodedInfo: { [key: string]: string | number | null } = {}; // Usar un tipo más específico
+
+        // Iterar sobre todos los resultados y procesarlos
+        nhtsaData.Results.forEach((item: any) => {
+          if (item.Value && item.Variable) {
+            const key = item.Variable.replace(/[^a-zA-Z0-9]/g, ''); // Elimina caracteres no alfanuméricos
+            const camelCaseKey = key.charAt(0).toLowerCase() + key.slice(1); // Convierte a camelCase
+
+            // Intentar convertir a número si es un campo numérico conocido
+            if (['modelYear', 'engineNumberofCylinders', 'displacementCC', 'displacementCI', 'displacementL', 'engineBrakeHpFrom', 'engineBrakeHpTo'].includes(camelCaseKey)) {
+              const numValue = parseFloat(item.Value);
+              if (!isNaN(numValue)) {
+                decodedInfo[camelCaseKey] = numValue;
+              } else {
+                decodedInfo[camelCaseKey] = item.Value;
+              }
+            } else {
+              decodedInfo[camelCaseKey] = item.Value;
+            }
+          }
+        });
+
+        // Puedes seguir extrayendo campos comunes si quieres un acceso más directo,
+        // pero `decodedInfo` ya contendrá todos los datos procesados.
+        // Por ejemplo, para asegurar que 'make' y 'model' estén en la raíz del objeto de datos:
+        const finalData = {
+          vin,
+          make: decodedInfo.make || null,
+          model: decodedInfo.model || null,
+          modelYear: decodedInfo.modelYear || null,
+          bodyClass: decodedInfo.bodyClass || null,
+          vehicleType: decodedInfo.vehicleType || null,
+          engineCylinders: decodedInfo.engineNumberofCylinders || null, // Corregido el nombre de la variable
+          fuelType: decodedInfo.fuelTypePrimary || null, // Corregido el nombre de la variable
+          plantCountry: decodedInfo.plantCountry || null,
+          source: 'nhtsa_api',
+          // Añade todos los demás campos decodificados
+          ...decodedInfo
+        };
+
+        return NextResponse.json({
+          vin,
+          found: false,
+          message: `VIN ${vin} is new. Decoded info from NHTSA available.`,
+          data: finalData
+        });
+      } else {
+        console.log(`[check-vin] VIN ${vin} not found in database and no valid decode information from NHTSA.`);
+        return NextResponse.json({
+          vin,
+          found: false,
+          message: `VIN ${vin} is new, but no decode information available from NHTSA.`,
+          data: null
+        });
+      }
     }
-  };
-
-
-  return (
-    <div className="container mx-auto p-4">
-      <h3 className="text-2xl font-bold mb-4">Gestión de Vehículos</h3>
-
-      <div className="mb-6 p-4 border rounded-lg shadow-sm">
-        <h4 className="text-xl font-semibold mb-3">Verificar VIN</h4>
-        <SmartVinInput onVinDetected={handleVinDetected} /> {/* Pasa la función al SmartVinInput */}
-
-        <div className="mt-4">
-          <Label htmlFor="vinInput" className="block text-sm font-medium text-gray-700 mb-1">
-            O introduce el VIN manualmente:
-          </Label>
-          <div className="flex space-x-2">
-            <Input
-              id="vinInput"
-              type="text"
-              value={vin}
-              onChange={handleVinInputChange}
-              placeholder="Introduce el VIN aquí"
-              className="flex-grow"
-              maxLength={17} // Los VINs tienen 17 caracteres
-            />
-            <Button onClick={triggerVinCheck} disabled={isLoading || !vin}>
-              {isLoading ? 'Verificando...' : 'Verificar VIN'}
-            </Button>
-          </div>
-        </div>
-
-        {statusMessage && (
-          <p className={`mt-3 text-sm ${statusMessage.includes('Error') || statusMessage.includes('No se pudo') ? 'text-red-600' : 'text-green-600'}`}>
-            {statusMessage}
-          </p>
-        )}
-      </div>
-
-      {/* Formulario para mostrar los datos del vehículo */}
-      <div className="p-4 border rounded-lg shadow-sm">
-        <h4 className="text-xl font-semibold mb-3">Detalles del Vehículo</h4>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <Label htmlFor="make">Marca</Label>
-            <Input id="make" type="text" value={make} onChange={(e) => setMake(e.target.value)} placeholder="Marca" />
-          </div>
-          <div>
-            <Label htmlFor="model">Modelo</Label>
-            <Input id="model" type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder="Modelo" />
-          </div>
-          <div>
-            <Label htmlFor="modelYear">Año del Modelo</Label>
-            <Input id="modelYear" type="text" value={modelYear} onChange={(e) => setModelYear(e.target.value)} placeholder="Año" />
-          </div>
-          <div>
-            <Label htmlFor="bodyClass">Clase de Carrocería</Label>
-            <Input id="bodyClass" type="text" value={bodyClass} onChange={(e) => setBodyClass(e.target.value)} placeholder="Clase de Carrocería" />
-          </div>
-          <div>
-            <Label htmlFor="vehicleType">Tipo de Vehículo</Label>
-            <Input id="vehicleType" type="text" value={vehicleType} onChange={(e) => setVehicleType(e.target.value)} placeholder="Tipo de Vehículo" />
-          </div>
-          <div>
-            <Label htmlFor="engineCylinders">Cilindros del Motor</Label>
-            <Input id="engineCylinders" type="text" value={engineCylinders} onChange={(e) => setEngineCylinders(e.target.value)} placeholder="Cilindros" />
-          </div>
-          <div>
-            <Label htmlFor="fuelType">Tipo de Combustible</Label>
-            <Input id="fuelType" type="text" value={fuelType} onChange={(e) => setFuelType(e.target.value)} placeholder="Tipo de Combustible" />
-          </div>
-          <div>
-            <Label htmlFor="plantCountry">País de Fabricación</Label>
-            <Input id="plantCountry" type="text" value={plantCountry} onChange={(e) => setPlantCountry(e.target.value)} placeholder="País de Fabricación" />
-          </div>
-          {/* Añade más campos aquí según los datos que quieras mostrar */}
-        </div>
-        <Button className="mt-4">Guardar Vehículo</Button> {/* Ejemplo de botón para guardar */}
-      </div>
-    </div>
-  );
+  } catch (error: any) {
+    console.error('[check-vin] Error during VIN check process:', error);
+    return NextResponse.json({ error: 'Failed to process VIN check', details: error.message }, { status: 500 });
+  }
 }
