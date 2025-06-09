@@ -1,732 +1,217 @@
 'use client'
 
-import { useState, useRef, useCallback, useEffect } from 'react'
-import { Camera, X, Check, Loader2, AlertTriangle, Smartphone, Monitor, QrCode } from 'lucide-react'
-import { Button } from '@/app/components/ui/button'
-import { Input } from '@/app/components/ui/input'
+import React, { useRef, useEffect, useState, useCallback } from 'react'
+import { BrowserMultiFormatReader, DecodeHintType, Result } from '@zxing/library'
+import { Alert, AlertDescription, AlertTitle } from '@/app/components/ui/alert'
+import { Loader2, CameraOff, Video, AlertTriangle, CheckCircle, XCircle } from 'lucide-react'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select'
 import { Label } from '@/app/components/ui/label'
-import { Badge } from '@/app/components/ui/badge'
-import { useToast } from '@/app/components/ui/use-toast'
-
-// Importación de la librería ZXing
-import { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat } from '@zxing/library';
 
 interface VinScannerProps {
-  onVinDetected: (vin: string, vehicleData?: NHTSAVehicleData) => void
-  initialVin?: string
+  onVinDetected: (vin: string) => void
+  onError?: (error: string) => void
 }
 
-interface CameraError {
-  name: string
-  message: string
-  constraint?: string
-}
-
-// Definición de tipos para los datos de la NHTSA (si los usas)
-interface NHTSAVehicleData {
-  Make: string;
-  Model: string;
-  ModelYear: string;
-  VehicleType: string;
-  // ... otros campos relevantes
-}
-
-export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
-  const [isScanning, setIsScanning] = useState(false)
-  const [manualVin, setManualVin] = useState(initialVin || '')
-  const [isDecoding, setIsDecoding] = useState(false)
-  const [cameraError, setCameraError] = useState<CameraError | null>(null)
-  const [permissionStatus, setPermissionStatus] = useState<PermissionState>('prompt')
-  const [isCheckingPermissions, setIsCheckingPermissions] = useState(false)
-  const [isMobile, setIsMobile] = useState(false)
-  const [debugInfo, setDebugInfo] = useState<string[]>([])
-  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([])
-  const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null)
-  const [activeCameraId, setActiveCameraId] = useState<string | null>(null); // La cámara que está actualmente activa
-  
-  // Nuevos estados para ZXing
-  const [isZxingReady, setIsZxingReady] = useState(false);
-  const [zxingStatus, setZxingStatus] = useState<string>('Idle');
-  const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
-
+export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
-  const streamRef = useRef<MediaStream | null>(null)
-  const { toast } = useToast()
+  const readerRef = useRef<BrowserMultiFormatReader | null>(null)
+  const [isCameraReady, setIsCameraReady] = useState(false)
+  const [cameraError, setCameraError] = useState<string | null>(null)
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined)
+  const [scanResult, setScanResult] = useState<string | null>(null)
+  const [isScanning, setIsScanning] = useState(false) // Track if scanning is active
 
-  const addDebugInfo = useCallback((info: string) => {
-    const timestamp = new Date().toLocaleTimeString()
-    setDebugInfo(prev => [...prev.slice(-4), `[${timestamp}] ${info}`])
-    console.log(`[VIN Scanner] ${info}`)
-  }, [])
+  const hints = new Map<DecodeHintType, any>()
+  hints.set(DecodeHintType.ASSUME_GS1, true)
+  hints.set(DecodeHintType.TRY_HARDER, true)
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+    // Add specific formats if you know them, e.g., BarcodeFormat.CODE_39, BarcodeFormat.QR_CODE
+  ])
 
-  // Detect mobile device
-  useEffect(() => {
-    const checkMobile = () => {
-      const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera
-      const isMobileDevice = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent.toLowerCase())
-      const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0
-      const isSmallScreen = window.innerWidth <= 768
-
-      const mobile = isMobileDevice || (isTouchDevice && isSmallScreen)
-      setIsMobile(mobile)
-
-      addDebugInfo(`Device detection: ${mobile ? 'Mobile' : 'Desktop'}`)
-      addDebugInfo(`User Agent: ${userAgent}`)
-      addDebugInfo(`Touch support: ${isTouchDevice}`)
-      addDebugInfo(`Screen width: ${window.innerWidth}px`)
-
-      return mobile
-    }
-
-    checkMobile()
-    window.addEventListener('resize', checkMobile)
-    return () => window.removeEventListener('resize', checkMobile)
-  }, [addDebugInfo])
-
-  // Inicializar ZXing Code Reader
-  const initializeZxingReader = useCallback(() => {
-    if (codeReaderRef.current) {
-      addDebugInfo('ZXing Code Reader already initialized.');
-      return;
-    }
-    addDebugInfo('Initializing ZXing Code Reader...');
-    try {
-      const hints = new Map();
-      const formats = [
-        BarcodeFormat.CODE_39, BarcodeFormat.CODE_93, BarcodeFormat.CODE_128,
-        BarcodeFormat.EAN_8, BarcodeFormat.EAN_13, BarcodeFormat.QR_CODE,
-        BarcodeFormat.DATA_MATRIX, BarcodeFormat.AZTEC, BarcodeFormat.PDF_417,
-        BarcodeFormat.ITF, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
-      ];
-      hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
-      hints.set(DecodeHintType.TRY_HARDER, true);
-
-      const reader = new BrowserMultiFormatReader(hints);
-      codeReaderRef.current = reader;
-      setIsZxingReady(true);
-      addDebugInfo('ZXing Code Reader initialized successfully.');
-      setZxingStatus('Ready to scan');
-    } catch (error) {
-      addDebugInfo(`Error initializing ZXing reader: ${error}`);
-      console.error('Error initializing ZXing reader:', error);
-      setCameraError({ name: 'ZxingInitError', message: 'Failed to load barcode scanner engine.' });
-      setZxingStatus('Error');
-    }
-  }, [addDebugInfo]);
-
-  // Función para validar si una cadena es un VIN (básica)
-  const isValidVIN = useCallback((text: string): boolean => {
-    if (text.length !== 17) return false;
-    if (/[IOQioq]/.test(text)) return false;
-    if (!/^[A-HJ-NPR-Z0-9]{17}$/i.test(text)) return false;
-    return true;
-  }, []); // <-- Añadido useCallback aquí
-
-  const checkCameraPermissions = useCallback(async () => {
-    setIsCheckingPermissions(true)
-    setCameraError(null);
-    addDebugInfo('=== CHECKING CAMERA PERMISSIONS ===')
-
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('MediaDevices API or getUserMedia not supported in this browser');
-      }
-      addDebugInfo('✔ MediaDevices API and getUserMedia available');
-
-      if ('permissions' in navigator) {
-        try {
-          const permission = await navigator.permissions.query({ name: 'camera' as PermissionName });
-          setPermissionStatus(permission.state);
-          addDebugInfo(`✔ Permission API result: ${permission.state}`);
-          permission.onchange = () => {
-            setPermissionStatus(permission.state);
-            addDebugInfo(`Permission changed to: ${permission.state}`);
-          };
-        } catch (permError) {
-          addDebugInfo(`✖ Permissions API query error: ${permError}`);
-          setPermissionStatus('unknown');
-        }
-      } else {
-        addDebugInfo('✖ Permissions API not available');
-        setPermissionStatus('unknown');
-      }
-
-      try {
-        const testStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        addDebugInfo(`✔ Camera access test successful`);
-        testStream.getTracks().forEach(track => track.stop());
-        setPermissionStatus('granted');
-      } catch (testError: any) {
-        addDebugInfo(`✖ Camera access test failed: ${testError.name} - ${testError.message}`);
-        if (testError.name === 'NotAllowedError') {
-          setPermissionStatus('denied');
-        } else if (testError.name === 'NotFoundError') {
-          setPermissionStatus('denied');
-          setCameraError({ name: 'NoCameraFound', message: 'No camera found on this device.' });
-        } else if (testError.name === 'NotReadableError') {
-          setPermissionStatus('denied');
-          setCameraError({ name: 'CameraInUse', message: 'Camera is already in use by another application.' });
-        } else {
-          setPermissionStatus('unknown');
-          setCameraError({ name: testError.name, message: testError.message });
-        }
-      }
-    } catch (error: any) {
-      addDebugInfo(`=== PERMISSION CHECK FAILED ===`);
-      addDebugInfo(`Permission check error: ${error.message}`);
-      setCameraError({
-        name: error.name || 'PermissionError',
-        message: error.message || 'Unknown permission error'
-      });
-    } finally {
-      setIsCheckingPermissions(false);
-      addDebugInfo('Permission check completed');
-    }
-  }, [addDebugInfo]);
-
-  const enumerateCameras = useCallback(async () => {
-    addDebugInfo('Enumerating media devices...');
-    try {
-      let tempStream: MediaStream | null = null;
-      if (permissionStatus === 'granted') {
-        try {
-          tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
-          addDebugInfo('Temporary stream obtained for device enumeration.');
-        } catch (e) {
-          addDebugInfo(`Could not get temporary stream for enumeration: ${e}`);
-        }
-      }
-
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(device => device.kind === 'videoinput');
-      setAvailableCameras(videoDevices);
-      addDebugInfo(`Found ${videoDevices.length} video devices.`);
-      videoDevices.forEach((device, index) => addDebugInfo(`Device ${index}: id=${device.deviceId}, label=${device.label || 'No label (permission needed)'}, facingMode=${(device as any).facingMode || 'unknown'}`));
-
-      if (!selectedCameraId && videoDevices.length > 0) {
-        const rearCamera = videoDevices.find(device =>
-          device.label.toLowerCase().includes('back') ||
-          device.label.toLowerCase().includes('environment') ||
-          (device as any).facingMode === 'environment'
-        );
-        if (rearCamera) {
-          setSelectedCameraId(rearCamera.deviceId);
-          addDebugInfo(`Defaulting to rear camera: ${rearCamera.label}`);
-        } else {
-          setSelectedCameraId(videoDevices[0].deviceId);
-          addDebugInfo(`Defaulting to first camera: ${videoDevices[0].label}`);
-        }
-      }
-
-      if (tempStream) {
-        tempStream.getTracks().forEach(track => track.stop());
-        addDebugInfo('Temporary stream stopped.');
-      }
-
-    } catch (error) {
-      addDebugInfo(`Error enumerating devices: ${error}`);
-      console.error('Error enumerating devices:', error);
-    }
-  }, [addDebugInfo, permissionStatus, selectedCameraId]);
-
-  const getCameraConstraints = useCallback(() => {
-    const constraints: MediaStreamConstraints = {
-      video: {
-        width: { ideal: isMobile ? 1920 : 1280 },
-        height: { ideal: isMobile ? 1080 : 720 },
-        aspectRatio: { ideal: 16/9 },
-        frameRate: { ideal: 30, max: 30 }
-      }
-    };
-
-    if (selectedCameraId) {
-      (constraints.video as MediaTrackConstraints).deviceId = { exact: selectedCameraId };
-      addDebugInfo(`Using specific camera ID: ${selectedCameraId}`);
-    } else {
-      (constraints.video as MediaTrackConstraints).facingMode = 'environment';
-      addDebugInfo(`No specific camera ID, trying 'environment' facingMode.`);
-    }
-
-    if (isMobile) {
-      (constraints.video as MediaTrackConstraints) = {
-        ...(constraints.video as MediaTrackConstraints),
-        focusMode: 'continuous',
-        exposureMode: 'continuous',
-        whiteBalanceMode: 'continuous',
-        zoom: { ideal: 1.0 }
-      };
-    }
-    addDebugInfo(`Using camera constraints: ${JSON.stringify(constraints)}`);
-    return constraints;
-  }, [isMobile, selectedCameraId, addDebugInfo]);
-
-
-  const stopCamera = useCallback(() => {
-    addDebugInfo('Stopping camera...')
-    if (codeReaderRef.current) {
-      codeReaderRef.current.reset();
-      addDebugInfo('ZXing reader reset.');
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => {
-        track.stop()
-        addDebugInfo(`Stopped track: ${track.kind}`)
-      })
-      streamRef.current = null
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null
-      videoRef.current.pause();
-      videoRef.current.load(); // Añadir load() para asegurar que el video se reinicie completamente
-    }
-    setIsScanning(false)
-    setZxingStatus('Idle');
-    setActiveCameraId(null);
-    addDebugInfo('Camera stopped')
-  }, [addDebugInfo])
-
-  const startCamera = useCallback(async () => {
-    addDebugInfo('=== STARTING CAMERA PROCESS ===')
-    setCameraError(null)
-
-    // Si ya estamos escaneando con la cámara seleccionada, no hacer nada
-    if (isScanning && activeCameraId === selectedCameraId) {
-      addDebugInfo('Camera already scanning with the same ID. Skipping restart.');
-      return;
-    }
-
-    // Si estamos escaneando con una cámara diferente, o si no estamos escaneando, detener la actual
-    if (isScanning) {
-      addDebugInfo('Camera already scanning or needs restart. Stopping current stream.');
-      stopCamera();
-    }
-
-    try {
-      if (permissionStatus === 'denied') {
-        throw new Error('Camera permission denied. Please enable camera access in your browser settings.')
-      }
-
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('getUserMedia not supported in this browser')
-      }
-      addDebugInfo('✔ getUserMedia is available')
-
-      const constraints = getCameraConstraints();
-      addDebugInfo(`Attempting to get stream with constraints: ${JSON.stringify(constraints, null, 2)}`);
-
-      let stream: MediaStream | null = null;
-      try {
-        const getUserMediaPromise = navigator.mediaDevices.getUserMedia(constraints);
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('getUserMedia timeout after 10 seconds')), 10000);
-        });
-
-        stream = await Promise.race([getUserMediaPromise, timeoutPromise]) as MediaStream;
-        addDebugInfo(`✔ SUCCESS with selected constraints`);
-        stream.getTracks().forEach((track, index) => {
-          addDebugInfo(`Track ${index}: ${track.kind}, enabled: ${track.enabled}, readyState: ${track.readyState}`);
-          if (track.kind === 'video') {
-            const settings = track.getSettings();
-            addDebugInfo(`Video settings: ${JSON.stringify(settings)}`);
-          }
-        });
-      } catch (constraintError: any) {
-        addDebugInfo(`✖ FAILED with specified constraints: ${constraintError.name} - ${constraintError.message}`);
-        addDebugInfo('Attempting fallback to basic video: true constraints...');
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({ video: true });
-          addDebugInfo('✔ SUCCESS with fallback constraints: { video: true }');
-        } catch (fallbackError: any) {
-          addDebugInfo(`✖ FAILED with fallback constraints: ${fallbackError.name} - ${fallbackError.message}`);
-          throw fallbackError;
-        }
-      }
-
-      if (!stream) {
-        throw new Error('Failed to get camera stream with any constraint set');
-      }
-
-      streamRef.current = stream;
-      setIsScanning(true);
-      setActiveCameraId(selectedCameraId);
-      
-      addDebugInfo('=== CAMERA STREAM OBTAINED SUCCESSFULLY ===');
-
-    } catch (error: any) {
-      addDebugInfo(`=== CAMERA START FAILED ===`);
-      addDebugInfo(`Camera start error: ${error.name}: ${error.message}`);
-      console.error('Error starting camera:', error);
-      setCameraError({
-        name: error.name || 'UnknownError',
-        message: error.message || 'Unknown error occurred while starting camera'
-      });
-      stopCamera();
-    }
-  }, [toast, permissionStatus, getCameraConstraints, addDebugInfo, stopCamera, isScanning, activeCameraId, selectedCameraId]);
-
-  const decodeVin = useCallback(async () => {
-    if (!manualVin) {
-      toast({
-        title: "VIN Required",
-        description: "Please enter a VIN to decode.",
-        variant: "destructive",
-      })
+  const startScanning = useCallback(async (deviceId: string) => {
+    if (!videoRef.current) {
+      console.error('[VIN Scanner] Video element not available.')
+      setCameraError('Video element not ready. Please try again.')
+      onError?.('Video element not ready.')
       return
     }
 
-    setIsDecoding(true)
-    addDebugInfo(`Decoding VIN: ${manualVin}`)
+    if (readerRef.current) {
+      readerRef.current.reset() // Reset previous reader instance
+    } else {
+      readerRef.current = new BrowserMultiFormatReader(hints)
+    }
+
+    setIsCameraReady(false)
     setCameraError(null)
+    setScanResult(null)
+    setIsScanning(true) // Set scanning to active
 
     try {
-      const response = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/${manualVin}?format=json`)
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-      const data = await response.json()
-
-      if (data.Results && data.Results.length > 0 && data.Results[0].ErrorCode === '0') {
-        const vehicleData: NHTSAVehicleData = data.Results.reduce((acc: any, item: any) => {
-          if (item.Value && item.Value !== 'Not Applicable') {
-            acc[item.Variable] = item.Value
-          }
-          return acc
-        }, {})
-        addDebugInfo(`VIN decoded successfully: con datos`)
-        onVinDetected(manualVin, vehicleData)
-        toast({
-          title: "VIN Decoded Successfully",
-          description: `Vehicle: ${vehicleData.Make || ''} ${vehicleData.Model || ''} (${vehicleData.ModelYear || ''})`,
-          variant: "success",
-        })
-      } else {
-        addDebugInfo(`VIN decode failed: ${data.Message || 'No data found'}`)
-        onVinDetected(manualVin, undefined)
-        toast({
-          title: "VIN Decode Failed",
-          description: data.Message || "Could not retrieve vehicle data for this VIN. Please check the VIN.",
-          variant: "destructive",
-        })
-      }
-    } catch (error) {
-      addDebugInfo(`Error decoding VIN: ${error}`)
-      console.error('Error decoding VIN:', error)
-      setCameraError({
-        name: 'DecodeError',
-        message: error instanceof Error ? error.message : 'Failed to decode VIN'
+      console.log(`[VIN Scanner] Attempting to start camera with deviceId: ${deviceId}`)
+      await readerRef.current.decodeFromVideoDevice(deviceId, videoRef.current, (result: Result, error: Error) => {
+        if (result) {
+          const vin = result.getText().toUpperCase().replace(/[^0-9A-Z]/g, '')
+          console.log('[VIN Scanner] VIN detected:', vin)
+          setScanResult(vin)
+          onVinDetected(vin)
+          readerRef.current?.reset() // Stop scanning after detection
+          setIsScanning(false) // Set scanning to inactive
+        }
+        if (error && !scanResult) { // Only show error if no result yet
+          // console.warn('[VIN Scanner] Scan error:', error.message);
+          // setScanError(error.message); // Don't set error for every frame
+        }
       })
-      toast({
-        title: "Decoding Error",
-        description: "Failed to connect to VIN decoding service. Please try again later.",
-        variant: "destructive",
-      })
-    } finally {
-      setIsDecoding(false)
+      console.log('[VIN Scanner] Camera stream obtained successfully.')
+      setIsCameraReady(true)
+    } catch (err: any) {
+      console.error('[VIN Scanner] Camera start failed:', err)
+      let errorMessage = 'Failed to start camera. Please ensure camera access is granted and no other app is using it.'
+      if (err.name === 'NotAllowedError') {
+        errorMessage = 'Camera access denied. Please grant permission in your browser settings.'
+      } else if (err.name === 'NotFoundError') {
+        errorMessage = 'No camera found. Please ensure a camera is connected.'
+      } else if (err.name === 'NotReadableError') {
+        errorMessage = 'Camera is in use by another application or device is not available.'
+      } else if (err.name === 'OverconstrainedError') {
+        errorMessage = 'Camera constraints not supported by device.'
+      }
+      setCameraError(errorMessage)
+      onError?.(errorMessage)
+      setIsCameraReady(false)
+      setIsScanning(false) // Set scanning to inactive on error
     }
-  }, [manualVin, onVinDetected, addDebugInfo, toast])
+  }, [onVinDetected, onError, hints, scanResult]) // Added scanResult to dependencies
 
-  // Auto-check permissions on mount
-  useEffect(() => {
-    checkCameraPermissions();
-  }, [checkCameraPermissions]);
-
-  // Enumerar cámaras cuando se otorgan permisos o al montar
-  useEffect(() => {
-    if (permissionStatus === 'granted') {
-      enumerateCameras();
+  const stopScanning = useCallback(() => {
+    if (readerRef.current) {
+      console.log('[VIN Scanner] Stopping camera...')
+      readerRef.current.reset()
+      setIsCameraReady(false)
+      setIsScanning(false)
     }
-  }, [permissionStatus, enumerateCameras]);
+  }, [])
 
-  // Inicializar ZXing reader al montar
   useEffect(() => {
-    initializeZxingReader();
+    // Initial device enumeration
+    const enumerateDevices = async () => {
+      try {
+        const videoInputDevices = await BrowserMultiFormatReader.listVideoInputDevices()
+        setDevices(videoInputDevices)
+        if (videoInputDevices.length > 0) {
+          // Prioritize back camera if available, otherwise select first
+          const backCamera = videoInputDevices.find(device => device.label.toLowerCase().includes('back'))
+          const defaultDeviceId = backCamera ? backCamera.deviceId : videoInputDevices[0].deviceId
+          setSelectedDeviceId(defaultDeviceId)
+          // Do NOT start scanning here automatically.
+          // Scanning will be triggered by the parent component (SmartVinInput)
+          // when `isScanning` state becomes true.
+        } else {
+          setCameraError('No video input devices found.')
+          onError?.('No video input devices found.')
+        }
+      } catch (err: any) {
+        console.error('[VIN Scanner] Error enumerating devices:', err)
+        setCameraError('Error accessing camera devices. Please check permissions.')
+        onError?.('Error enumerating devices.')
+      }
+    }
 
+    enumerateDevices()
+
+    // Cleanup on unmount
     return () => {
-      if (codeReaderRef.current) {
-        addDebugInfo('Resetting ZXing reader on unmount...');
-        codeReaderRef.current.reset();
-        codeReaderRef.current = null;
-      }
-      // Asegurarse de que la cámara se detenga si el componente se desmonta
-      stopCamera(); 
-    };
-  }, [addDebugInfo, initializeZxingReader, stopCamera]);
+      stopScanning()
+    }
+  }, [stopScanning, onError])
 
-  // Efecto para manejar el inicio/parada del escaneo ZXing
+  // Effect to start/stop scanning based on selectedDeviceId and isScanning state
   useEffect(() => {
-    let videoElement = videoRef.current;
-    let currentStream = streamRef.current;
-    let codeReader = codeReaderRef.current;
-
-    // Si no estamos escaneando o no tenemos los elementos necesarios, limpiar y salir
-    if (!isScanning || !videoElement || !currentStream || !codeReader) {
-      if (codeReader) {
-        addDebugInfo('isScanning is false or elements missing, ensuring ZXing reader is reset.');
-        codeReader.reset();
-      }
-      // Asegurarse de que el stream se detenga si el componente se desmonta o el efecto se limpia
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-        streamRef.current = null;
-      }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
-      return; // Salir temprano si no hay escaneo activo
+    if (selectedDeviceId && isScanning) {
+      startScanning(selectedDeviceId)
+    } else if (!isScanning) {
+      stopScanning()
     }
+  }, [selectedDeviceId, isScanning, startScanning, stopScanning])
 
-    addDebugInfo('Attaching stream to video element and preparing ZXing scan...');
 
-    // Solo asignar srcObject si es diferente para evitar interrupciones innecesarias
-    if (videoElement.srcObject !== currentStream) {
-      videoElement.srcObject = currentStream;
-      addDebugInfo('Video srcObject assigned.');
+  const handleDeviceChange = (deviceId: string) => {
+    setSelectedDeviceId(deviceId)
+    // Restart scanning with new device if already active
+    if (isScanning) {
+      startScanning(deviceId)
     }
-
-    const onCanPlay = () => {
-      addDebugInfo('Video element ready for playback. Starting ZXing decode...');
-      setZxingStatus('Scanning for codes...');
-
-      // Asegurarse de que el video tenga dimensiones válidas antes de intentar getImageData
-      if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
-        addDebugInfo('Video element has zero dimensions, waiting for videoWidth/Height...');
-        // Podríamos añadir un setTimeout aquí o esperar otro 'canplay' event si es necesario
-        return;
-      }
-
-      // @ts-ignore
-      if (!codeReader.isDecoding && !codeReader.isScanning) { // Asegurarse de que no esté ya decodificando
-        codeReader.decodeFromVideoDevice(
-          selectedCameraId || undefined,
-          videoElement,
-          (result, error) => {
-            if (result) {
-              addDebugInfo(`ZXing Detected: ${result.getText()} (Format: ${result.getBarcodeFormat().toString()})`);
-              const detectedCode = result.getText();
-              if (isValidVIN(detectedCode)) { // Usar la función memoizada
-                setManualVin(detectedCode);
-                stopCamera(); // Usar la función memoizada
-                addDebugInfo(`VIN Detected via Barcode/QR: ${detectedCode}`);
-                toast({ // Usar la función toast
-                  title: "VIN Detected!",
-                  description: `Found VIN: ${detectedCode}. Please verify and submit.`,
-                  variant: "success"
-                });
-              } else {
-                setZxingStatus(`Code found, but not a valid VIN: ${detectedCode.substring(0, 20)}...`);
-              }
-            }
-            if (error && !error.message.includes('No MultiFormat Readers')) {
-              addDebugInfo(`ZXing Error: ${error}`);
-              setZxingStatus('Scanning...');
-            }
-          }
-        );
-      } else {
-        addDebugInfo('ZXing reader already decoding or scanning. Skipping redundant call.');
-      }
-    };
-
-    const onError = (e: Event) => {
-      addDebugInfo(`Video element error: ${e.type}`);
-      setCameraError({ name: 'VideoError', message: 'Video element encountered an error.' });
-      stopCamera();
-    };
-
-    videoElement.addEventListener('canplay', onCanPlay);
-    videoElement.addEventListener('error', onError);
-
-    // Intentar reproducir el video.
-    // Si el video ya está listo, ejecutar onCanPlay inmediatamente
-    if (videoElement.readyState >= 3) { // HAVE_FUTURE_DATA or higher
-      onCanPlay();
-    } else {
-      videoElement.play().catch(playError => {
-        addDebugInfo(`Error attempting to play video: ${playError}`);
-        setCameraError({ name: 'VideoPlayError', message: `Failed to play video: ${playError.message}` });
-        stopCamera();
-      });
-    }
-
-    return () => {
-      addDebugInfo('Cleaning up ZXing effect...');
-      videoElement.removeEventListener('canplay', onCanPlay);
-      videoElement.removeEventListener('error', onError);
-      if (codeReader) {
-        codeReader.reset();
-        addDebugInfo('ZXing reader reset during cleanup.');
-      }
-      // Asegurarse de que el stream se detenga si el componente se desmonta o el efecto se limpia
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-        streamRef.current = null;
-      }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
-    };
-  }, [isScanning, selectedCameraId, addDebugInfo, isValidVIN, toast, stopCamera]); // Dependencias del useEffect
-
-  // Efecto para reiniciar la cámara si el usuario cambia la cámara seleccionada manualmente
-  // SOLO si ya estamos escaneando.
-  useEffect(() => {
-    if (isScanning && selectedCameraId && selectedCameraId !== activeCameraId) {
-      addDebugInfo(`User changed selected camera ID from ${activeCameraId} to ${selectedCameraId}. Restarting camera...`);
-      startCamera();
-    }
-  }, [selectedCameraId, activeCameraId, isScanning, startCamera, addDebugInfo]);
-
+  }
 
   return (
-    <div className="flex flex-col items-center justify-center p-4 space-y-4">
-      <h3 className="text-2xl font-bold">VIN Scanner</h3>
-
-      {isScanning ? (
-        <div className="relative w-full max-w-md aspect-video bg-gray-900 rounded-lg overflow-hidden">
-          <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"></video>
-          {/* Marco de posición del VIN - SIN FONDO NEGRO */}
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="border-2 border-white border-dashed w-3/4 h-16 rounded-lg flex items-center justify-center">
-              <span className="text-white text-sm font-medium">Position Barcode/QR here</span>
-            </div>
+    <div className="flex flex-col h-full w-full">
+      {/* Camera Controls and Status */}
+      <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded-t-md flex flex-col sm:flex-row items-center justify-between gap-2">
+        {devices.length > 1 && (
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <Label htmlFor="camera-select" className="sr-only sm:not-sr-only">Camera:</Label>
+            <Select value={selectedDeviceId} onValueChange={handleDeviceChange} disabled={!isCameraReady && isScanning}>
+              <SelectTrigger id="camera-select" className="w-full sm:w-[180px]">
+                <SelectValue placeholder="Select Camera" />
+              </SelectTrigger>
+              <SelectContent>
+                {devices.map(device => (
+                  <SelectItem key={device.deviceId} value={device.deviceId}>
+                    {device.label || `Camera ${device.deviceId.substring(0, 4)}`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-
-          {/* Botones de control de la cámara */}
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex space-x-2">
-            <Button
-              size={isMobile ? "default" : "sm"}
-              variant="outline"
-              onClick={stopCamera}
-              className={isMobile ? "px-4 py-2" : ""}
-            >
-              <X className="w-4 h-4" />
-              {isMobile && <span className="ml-2">Stop Scan</span>}
-            </Button>
-          </div>
-          {/* Indicador de escaneo ZXing */}
-          <div className="absolute bottom-2 left-2 right-2">
-            <Badge className="w-full justify-center text-center">
-              {zxingStatus === 'Scanning for codes...' ? (
-                <>
-                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                  {zxingStatus}
-                </>
-              ) : (
-                <>
-                  <QrCode className="w-3 h-3 mr-1" />
-                  {zxingStatus}
-                </>
-              )}
-            </Badge>
-          </div>
-        </div>
-      ) : (
-        <div className="w-full max-w-md space-y-4">
-          <div className="space-y-2">
-            {/* Selector de cámara */}
-            {availableCameras.length > 1 && (
-              <div className="space-y-1">
-                <Label htmlFor="camera-select">Select Camera:</Label>
-                <select
-                  id="camera-select"
-                  className="block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                  value={selectedCameraId || ''}
-                  onChange={(e) => setSelectedCameraId(e.target.value)}
-                >
-                  {availableCameras.map(camera => (
-                    <option key={camera.deviceId} value={camera.deviceId}>
-                      {camera.label || `Camera ${camera.deviceId.substring(0, 8)}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            <Button
-              onClick={startCamera}
-              className="w-full"
-              disabled={isCheckingPermissions || permissionStatus === 'denied' || !isZxingReady || !selectedCameraId}
-              size={isMobile ? "lg" : "default"}
-            >
-              {isCheckingPermissions ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Checking Permissions...
-                </>
-              ) : !isZxingReady ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Loading Scanner...
-                </>
-              ) : !selectedCameraId ? (
-                <>
-                  <AlertTriangle className="w-4 h-4 mr-2" />
-                  No Camera Selected
-                </>
-              ) : (
-                <>
-                  <Camera className="w-4 h-4 mr-2" />
-                  Start Scan
-                </>
-              )}
-            </Button>
-          </div>
-
-          {cameraError && (
-            <div className="flex items-center p-3 text-sm text-red-800 rounded-lg bg-red-50 dark:bg-gray-800 dark:text-red-400" role="alert">
-              <AlertTriangle className="w-4 h-4 mr-2" />
-              <div>
-                <span className="font-medium">{cameraError.name}:</span> {cameraError.message}
-              </div>
-            </div>
+        )}
+        <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 w-full sm:w-auto justify-center sm:justify-end">
+          {!isScanning && !cameraError && (
+            <span className="flex items-center">
+              <Video className="h-4 w-4 mr-1 text-blue-500" /> Ready to scan
+            </span>
           )}
-
-          <div className="relative">
-            <Label htmlFor="manual-vin">Or Enter VIN Manually:</Label>
-            <Input
-              id="manual-vin"
-              type="text"
-              placeholder="Enter VIN (17 characters)"
-              value={manualVin}
-              onChange={(e) => setManualVin(e.target.value.toUpperCase())}
-              maxLength={17}
-              className={`font-mono ${isMobile ? 'text-lg' : ''}`}
-              style={isMobile ? { fontSize: '16px' } : {}}
-            />
-            {manualVin && isValidVIN(manualVin) && (
-              <Check className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-green-500" />
-            )}
-          </div>
-
-          <Button
-            onClick={decodeVin}
-            className="w-full"
-            disabled={!isValidVIN(manualVin) || isDecoding}
-            size={isMobile ? "lg" : "default"}
-          >
-            {isDecoding ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Decoding VIN...
-              </>
-            ) : (
-              <>
-                <Check className="w-4 h-4 mr-2" />
-                Decode VIN
-              </>
-            )}
-          </Button>
-
-          <div className="mt-4 text-sm text-gray-600 dark:text-gray-400">
-            <h4 className="font-semibold">Debug Info:</h4>
-            <ul className="list-disc list-inside text-xs">
-              {debugInfo.map((info, index) => (
-                <li key={index}>{info}</li>
-              ))}
-            </ul>
-          </div>
+          {isScanning && !isCameraReady && !cameraError && (
+            <span className="flex items-center animate-pulse">
+              <Loader2 className="h-4 w-4 mr-1 text-blue-500" /> Starting camera...
+            </span>
+          )}
+          {isCameraReady && isScanning && !scanResult && (
+            <span className="flex items-center text-green-600 dark:text-green-400">
+              <CheckCircle className="h-4 w-4 mr-1" /> Scanning...
+            </span>
+          )}
+          {scanResult && (
+            <span className="flex items-center text-green-600 dark:text-green-400">
+              <CheckCircle className="h-4 w-4 mr-1" /> VIN Detected!
+            </span>
+          )}
+          {cameraError && (
+            <span className="flex items-center text-red-600 dark:text-red-400">
+              <AlertTriangle className="h-4 w-4 mr-1" /> {cameraError}
+            </span>
+          )}
         </div>
-      )}
+      </div>
+
+      {/* Video Feed */}
+      <div className="relative flex-grow bg-black rounded-b-md overflow-hidden flex items-center justify-center">
+        {!isCameraReady && !cameraError && isScanning && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 text-white text-center p-4">
+            <Loader2 className="h-10 w-10 animate-spin text-blue-400 mr-3" />
+            <p className="text-lg">Waiting for camera stream...</p>
+          </div>
+        )}
+        {cameraError && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-900 bg-opacity-75 text-white text-center p-4">
+            <CameraOff className="h-12 w-12 mb-4" />
+            <p className="text-lg font-semibold">Camera Error</p>
+            <p className="text-sm">{cameraError}</p>
+          </div>
+        )}
+        <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"></video>
+      </div>
     </div>
   )
 }
