@@ -3,10 +3,10 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { BrowserMultiFormatReader, DecodeHintType, Result } from '@zxing/library'
 import { Alert, AlertDescription, AlertTitle } from '@/app/components/ui/alert'
-import { Loader2, CameraOff, Video, AlertTriangle, CheckCircle, XCircle, Play, StopCircle } from 'lucide-react' // Added Play and StopCircle icons
+import { Loader2, CameraOff, Video, AlertTriangle, CheckCircle, XCircle, Play, StopCircle } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select'
 import { Label } from '@/app/components/ui/label'
-import { Button } from '@/app/components/ui/button' // Assuming you have a Button component
+import { Button } from '@/app/components/ui/button'
 
 interface VinScannerProps {
   onVinDetected: (vin: string) => void
@@ -16,6 +16,8 @@ interface VinScannerProps {
 export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const readerRef = useRef<BrowserMultiFormatReader | null>(null)
+  const isMounted = useRef(true); // Para rastrear si el componente está montado
+
   const [isCameraReady, setIsCameraReady] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
@@ -35,45 +37,68 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     if (!readerRef.current) {
       readerRef.current = new BrowserMultiFormatReader(hints)
     }
+    // Cleanup for isMounted ref
+    return () => {
+      isMounted.current = false;
+    };
   }, [hints])
 
   const stopScanning = useCallback(() => {
     if (readerRef.current) {
       console.log('[VIN Scanner] Stopping camera...')
       readerRef.current.reset() // This stops the video stream and clears internal state
-      setIsCameraReady(false)
-      setIsScanningActive(false) // Ensure this is false when stopped
+      if (videoRef.current && videoRef.current.srcObject) {
+        (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+        videoRef.current.srcObject = null;
+      }
+      if (isMounted.current) { // Solo actualiza el estado si el componente sigue montado
+        setIsCameraReady(false)
+        setIsScanningActive(false)
+      }
     }
   }, [])
 
   const startScanning = useCallback(async (deviceId: string) => {
+    if (!isMounted.current) return; // No hacer nada si el componente ya no está montado
+
     if (!videoRef.current) {
       console.error('[VIN Scanner] Video element not available.')
-      setCameraError('Video element not ready. Please try again.')
+      if (isMounted.current) {
+        setCameraError('Video element not ready. Please try again.')
+        setIsScanningActive(false);
+      }
       onError?.('Video element not ready.')
-      setIsScanningActive(false); // Ensure scanning is off if video not ready
       return
     }
 
     if (!readerRef.current) {
       console.error('[VIN Scanner] Reader not initialized.')
-      setCameraError('Scanner not ready. Please refresh.')
+      if (isMounted.current) {
+        setCameraError('Scanner not ready. Please refresh.')
+        setIsScanningActive(false);
+      }
       onError?.('Scanner not ready.')
-      setIsScanningActive(false); // Ensure scanning is off if reader not ready
       return
     }
 
-    // Reset reader before starting a new scan to clear previous streams
-    readerRef.current.reset()
+    // Si ya estamos escaneando, detenemos primero para evitar conflictos
+    if (isScanningActive) {
+      stopScanning();
+    }
 
-    setIsCameraReady(false)
-    setCameraError(null)
-    setScanResult(null)
-    setIsScanningActive(true) // Explicitly set scanning to active
+    if (isMounted.current) {
+      setIsCameraReady(false)
+      setCameraError(null)
+      setScanResult(null)
+      setIsScanningActive(true) // Explicitly set scanning to active
+    }
 
     try {
       console.log(`[VIN Scanner] Attempting to start camera with deviceId: ${deviceId}`)
+      // decodeFromVideoDevice ya maneja el stream y la reproducción
       await readerRef.current.decodeFromVideoDevice(deviceId, videoRef.current, (result: Result, error: Error) => {
+        if (!isMounted.current) return; // No procesar si el componente ya no está montado
+
         if (result) {
           const vin = result.getText().toUpperCase().replace(/[^0-9A-Z]/g, '')
           console.log('[VIN Scanner] VIN detected:', vin)
@@ -87,7 +112,9 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
         }
       })
       console.log('[VIN Scanner] Camera stream obtained successfully.')
-      setIsCameraReady(true)
+      if (isMounted.current) {
+        setIsCameraReady(true)
+      }
     } catch (err: any) {
       console.error('[VIN Scanner] Camera start failed:', err)
       let errorMessage = 'Failed to start camera. Please ensure camera access is granted and no other app is using it.'
@@ -99,13 +126,17 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
         errorMessage = 'Camera is in use by another application or device is not available.'
       } else if (err.name === 'OverconstrainedError') {
         errorMessage = 'Camera constraints not supported by device.'
+      } else if (err.message.includes('play()')) { // Específico para el error de reproducción
+        errorMessage = 'Could not play video stream. Browser autoplay policies or concurrent access might be an issue.'
       }
-      setCameraError(errorMessage)
+      if (isMounted.current) {
+        setCameraError(errorMessage)
+        setIsCameraReady(false)
+        setIsScanningActive(false) // Set scanning to inactive on error
+      }
       onError?.(errorMessage)
-      setIsCameraReady(false)
-      setIsScanningActive(false) // Set scanning to inactive on error
     }
-  }, [onVinDetected, onError, scanResult, stopScanning]) // Added stopScanning to dependencies
+  }, [onVinDetected, onError, scanResult, stopScanning, isScanningActive]) // Added isScanningActive to dependencies
 
   // Effect for initial device enumeration and cleanup
   useEffect(() => {
@@ -115,18 +146,22 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
       }
       try {
         const videoInputDevices = await readerRef.current.listVideoInputDevices()
-        setDevices(videoInputDevices)
-        if (videoInputDevices.length > 0) {
-          const backCamera = videoInputDevices.find(device => device.label.toLowerCase().includes('back'))
-          const defaultDeviceId = backCamera ? backCamera.deviceId : videoInputDevices[0].deviceId
-          setSelectedDeviceId(defaultDeviceId)
-        } else {
-          setCameraError('No video input devices found.')
-          onError?.('No video input devices found.')
+        if (isMounted.current) {
+          setDevices(videoInputDevices)
+          if (videoInputDevices.length > 0) {
+            const backCamera = videoInputDevices.find(device => device.label.toLowerCase().includes('back'))
+            const defaultDeviceId = backCamera ? backCamera.deviceId : videoInputDevices[0].deviceId
+            setSelectedDeviceId(defaultDeviceId)
+          } else {
+            setCameraError('No video input devices found.')
+            onError?.('No video input devices found.')
+          }
         }
       } catch (err: any) {
         console.error('[VIN Scanner] Error enumerating devices:', err)
-        setCameraError('Error accessing camera devices. Please check permissions.')
+        if (isMounted.current) {
+          setCameraError('Error accessing camera devices. Please check permissions.')
+        }
         onError?.('Error enumerating devices.')
       }
     }
@@ -136,6 +171,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     // Cleanup on unmount
     return () => {
       stopScanning()
+      isMounted.current = false; // Asegurarse de que el ref se actualice al desmontar
     }
   }, [stopScanning, onError, hints])
 
@@ -150,15 +186,17 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
 
   // Handlers for Start/Stop buttons
   const handleStartScan = () => {
-    if (selectedDeviceId) {
+    if (selectedDeviceId && !isScanningActive) { // Solo iniciar si hay un dispositivo y no está ya escaneando
       startScanning(selectedDeviceId)
-    } else {
+    } else if (!selectedDeviceId) {
       setCameraError('No camera selected or available.')
     }
   }
 
   const handleStopScan = () => {
-    stopScanning()
+    if (isScanningActive) { // Solo detener si está escaneando
+      stopScanning()
+    }
   }
 
   return (
