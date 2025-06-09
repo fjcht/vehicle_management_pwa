@@ -3,7 +3,8 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { BrowserMultiFormatReader, DecodeHintType, Result } from '@zxing/library'
 import { Alert, AlertDescription, AlertTitle } from '@/app/components/ui/alert'
-import { Loader2, CameraOff, Video, AlertTriangle, CheckCircle, XCircle } from 'lucide-react' // <-- ¡CORRECCIÓN AQUÍ!
+// Asegúrate de que AlertTriangle esté importado aquí
+import { Loader2, CameraOff, Video, AlertTriangle, CheckCircle, XCircle } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select'
 import { Label } from '@/app/components/ui/label'
 
@@ -29,6 +30,13 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     // Add specific formats if you know them, e.g., BarcodeFormat.CODE_39, BarcodeFormat.QR_CODE
   ])
 
+  // Initialize reader once
+  useEffect(() => {
+    if (!readerRef.current) {
+      readerRef.current = new BrowserMultiFormatReader(hints)
+    }
+  }, [hints])
+
   const startScanning = useCallback(async (deviceId: string) => {
     if (!videoRef.current) {
       console.error('[VIN Scanner] Video element not available.')
@@ -37,11 +45,15 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
       return
     }
 
-    if (readerRef.current) {
-      readerRef.current.reset() // Reset previous reader instance
-    } else {
-      readerRef.current = new BrowserMultiFormatReader(hints)
+    if (!readerRef.current) {
+      console.error('[VIN Scanner] Reader not initialized.')
+      setCameraError('Scanner not ready. Please refresh.')
+      onError?.('Scanner not ready.')
+      return
     }
+
+    // Stop any ongoing scan before starting a new one
+    readerRef.current.reset()
 
     setIsCameraReady(false)
     setCameraError(null)
@@ -59,8 +71,9 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
           readerRef.current?.reset() // Stop scanning after detection
           setIsScanning(false) // Set scanning to inactive
         }
-        if (error && !scanResult) { // Only show error if no result yet
-          // console.warn('[VIN Scanner] Scan error:', error.message);
+        // Only log scan errors if no result yet and it's not a common "no code found" error
+        if (error && !scanResult && error.message !== 'No code found') {
+          console.warn('[VIN Scanner] Scan error:', error.message);
           // setScanError(error.message); // Don't set error for every frame
         }
       })
@@ -83,7 +96,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
       setIsCameraReady(false)
       setIsScanning(false) // Set scanning to inactive on error
     }
-  }, [onVinDetected, onError, hints, scanResult]) // Added scanResult to dependencies
+  }, [onVinDetected, onError, hints, scanResult])
 
   const stopScanning = useCallback(() => {
     if (readerRef.current) {
@@ -97,17 +110,19 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
   useEffect(() => {
     // Initial device enumeration
     const enumerateDevices = async () => {
+      if (!readerRef.current) {
+        // Ensure reader is initialized before enumerating devices
+        readerRef.current = new BrowserMultiFormatReader(hints);
+      }
       try {
-        const videoInputDevices = await BrowserMultiFormatReader.listVideoInputDevices()
+        // Use the instance method listVideoInputDevices
+        const videoInputDevices = await readerRef.current.listVideoInputDevices()
         setDevices(videoInputDevices)
         if (videoInputDevices.length > 0) {
           // Prioritize back camera if available, otherwise select first
           const backCamera = videoInputDevices.find(device => device.label.toLowerCase().includes('back'))
           const defaultDeviceId = backCamera ? backCamera.deviceId : videoInputDevices[0].deviceId
           setSelectedDeviceId(defaultDeviceId)
-          // Do NOT start scanning here automatically.
-          // Scanning will be triggered by the parent component (SmartVinInput)
-          // when `isScanning` state becomes true.
         } else {
           setCameraError('No video input devices found.')
           onError?.('No video input devices found.')
@@ -125,7 +140,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     return () => {
       stopScanning()
     }
-  }, [stopScanning, onError])
+  }, [stopScanning, onError, hints]) // Added hints to dependencies for reader initialization
 
   // Effect to start/stop scanning based on selectedDeviceId and isScanning state
   useEffect(() => {
