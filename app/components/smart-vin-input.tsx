@@ -1,222 +1,178 @@
-'use client'
+// app/dashboard/page.tsx (o la página donde tienes el formulario del vehículo)
+'use client'; // Asegúrate de que sea un Client Component si usas useState y eventos
 
-import { useState, useEffect, useCallback } from 'react'
-import { Input } from '@/app/components/ui/input'
-import { Button } from '@/app/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card'
-import { Label } from '@/app/components/ui/label'
-import { Alert, AlertDescription, AlertTitle } from '@/app/components/ui/alert'
-import { Loader2, Scan, XCircle, CheckCircle, Search, Car, Database, ExternalLink } from 'lucide-react'
-import { VinScanner } from '@/app/components/vin-scanner' // <-- ¡Aquí está la importación!
-import { NHTSAVehicleData } from '@/app/lib/nhtsa'
-import { useToast } from '@/app/hooks/use-toast'
-import dynamic from 'next/dynamic'; // Import dynamic
+import { useState, useEffect } from 'react';
+import SmartVinInput from '@/app/components/smart-vin-input'; // Asegúrate de la ruta correcta
+import { Button } from '@/components/ui/button'; // Si usas shadcn/ui
+import { Input } from '@/components/ui/input'; // Si usas shadcn/ui
+import { Label } from '@/components/ui/label'; // Si usas shadcn/ui
 
-// Dynamic import for VinScanner to ensure it's only loaded on client-side
-const DynamicVinScanner = dynamic(() => import('@/app/components/vin-scanner').then(mod => mod.VinScanner), {
-  ssr: false,
-  loading: () => (
-    <div className="flex flex-col items-center justify-center p-8 bg-gray-50 dark:bg-gray-800 rounded-lg shadow-inner">
-      <Loader2 className="h-8 w-8 text-blue-500 animate-spin mb-4" />
-      <p className="text-gray-600 dark:text-gray-300">Loading scanner...</p>
-    </div>
-  ),
-});
+export default function DashboardPage() {
+  // 1. Estados para los campos del formulario del vehículo
+  const [vin, setVin] = useState<string>('');
+  const [make, setMake] = useState<string>('');
+  const [model, setModel] = useState<string>('');
+  const [modelYear, setModelYear] = useState<string>(''); // Usar string para input
+  const [bodyClass, setBodyClass] = useState<string>('');
+  const [vehicleType, setVehicleType] = useState<string>('');
+  const [engineCylinders, setEngineCylinders] = useState<string>('');
+  const [fuelType, setFuelType] = useState<string>('');
+  const [plantCountry, setPlantCountry] = useState<string>('');
+  const [statusMessage, setStatusMessage] = useState<string>('');
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
-interface SmartVinInputProps {
-  onVehicleDataFound: (data: { vin: string; data?: NHTSAVehicleData }, source: 'database' | 'nhtsa') => void
-  initialVin?: string
-  disabled?: boolean
-}
-
-export function SmartVinInput({ onVehicleDataFound, initialVin, disabled }: SmartVinInputProps) {
-  const [vin, setVin] = useState(initialVin || '')
-  const [isScanning, setIsScanning] = useState(false) // <-- Nuevo estado para controlar el escáner
-  const [isLoading, setIsLoading] = useState(false)
-  const [vinStatus, setVinStatus] = useState<'idle' | 'valid' | 'invalid' | 'checking'>('idle')
-  const [scanError, setScanError] = useState<string | null>(null)
-  const { toast } = useToast()
-
-  useEffect(() => {
-    if (initialVin) {
-      setVin(initialVin)
-      if (initialVin.length === 17) {
-        checkVin(initialVin)
-      }
-    }
-  }, [initialVin])
-
-  const checkVin = useCallback(async (currentVin: string) => {
-    if (currentVin.length !== 17) {
-      setVinStatus('invalid')
-      return
-    }
-
-    setIsLoading(true)
-    setVinStatus('checking')
-    setScanError(null)
+  // 2. Función para manejar el VIN detectado/introducido
+  const handleVinDetected = async (detectedVin: string) => {
+    setVin(detectedVin); // Actualiza el estado del VIN en el formulario
+    setStatusMessage('Verificando VIN...');
+    setIsLoading(true);
 
     try {
-      // 1. Check local database
-      const dbResponse = await fetch(`/api/vehicles/check-vin?vin=${currentVin}`)
-      if (dbResponse.ok) {
-        const dbData = await dbResponse.json()
-        if (dbData.exists) {
-          setVinStatus('valid')
-          onVehicleDataFound(dbData.vehicle, 'database')
-          toast({
-            title: "VIN Found in Database",
-            description: `Vehicle already exists: ${dbData.vehicle.make} ${dbData.vehicle.model} (${dbData.vehicle.year})`,
-            variant: "default"
-          })
-          setIsLoading(false)
-          return // Exit if found in DB
-        }
-      }
+      const response = await fetch(`/api/vehicles/check-vin?vin=${detectedVin}`);
+      const result = await response.json(); // result.data contendrá la info decodificada
 
-      // 2. If not in DB, check NHTSA
-      const nhtsaResponse = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/${currentVin}?format=json`)
-      const nhtsaData = await nhtsaResponse.json()
+      if (response.ok && result.data) {
+        console.log('Datos del vehículo recibidos:', result.data);
+        setStatusMessage(result.message);
 
-      if (nhtsaData.Results && nhtsaData.Results.length > 0 && nhtsaData.Results[0].ErrorCode === '0') {
-        const decodedData: NHTSAVehicleData = {}
-        nhtsaData.Results.forEach((item: any) => {
-          if (item.Value && item.Variable) {
-            // Map NHTSA variable names to more readable keys
-            if (item.Variable === 'Make') decodedData.Make = item.Value
-            if (item.Variable === 'Model') decodedData.Model = item.Value
-            if (item.Variable === 'Model Year') decodedData.ModelYear = item.Value
-            if (item.Variable === 'Body Class') decodedData.BodyClass = item.Value
-            if (item.Variable === 'Vehicle Type') decodedData.VehicleType = item.Value
-            if (item.Variable === 'Engine Cylinders') decodedData.EngineCylinders = item.Value
-            if (item.Variable === 'Fuel Type - Primary') decodedData.FuelTypePrimary = item.Value
-            if (item.Variable === 'Manufacturer Name') decodedData.ManufacturerName = item.Value
-            // Add more mappings as needed
-          }
-        })
-        setVinStatus('valid')
-        onVehicleDataFound({ vin: currentVin, data: decodedData }, 'nhtsa')
-        toast({
-          title: "VIN Decoded from NHTSA",
-          description: `Found: ${decodedData.Make || ''} ${decodedData.Model || ''} (${decodedData.ModelYear || ''})`,
-          variant: "default"
-        })
+        // 3. Rellenar los campos del formulario con los datos de la API
+        setMake(result.data.make || '');
+        setModel(result.data.model || '');
+        setModelYear(result.data.modelYear ? String(result.data.modelYear) : '');
+        setBodyClass(result.data.bodyClass || '');
+        setVehicleType(result.data.vehicleType || '');
+        setEngineCylinders(result.data.engineCylinders ? String(result.data.engineCylinders) : '');
+        setFuelType(result.data.fuelType || '');
+        setPlantCountry(result.data.plantCountry || '');
+
+        // Puedes añadir más campos aquí según lo que devuelva tu API y necesites
+        // Por ejemplo, si tu API devuelve 'doors', 'transmissionStyle', etc.
+        // setDoors(result.data.doors ? String(result.data.doors) : '');
+        // setTransmissionStyle(result.data.transmissionStyle || '');
+
       } else {
-        setVinStatus('invalid')
-        toast({
-          title: "VIN Not Found",
-          description: "Could not decode VIN from NHTSA. Please check the VIN or enter details manually.",
-          variant: "destructive"
-        })
+        console.error('Error o VIN no decodificado:', result.message);
+        setStatusMessage(result.message || 'No se pudo obtener información del VIN.');
+        // Opcional: Limpiar campos si el VIN no se decodificó o hubo un error
+        setMake('');
+        setModel('');
+        setModelYear('');
+        setBodyClass('');
+        setVehicleType('');
+        setEngineCylinders('');
+        setFuelType('');
+        setPlantCountry('');
       }
     } catch (error) {
-      console.error('Error checking VIN:', error)
-      setVinStatus('invalid')
-      setScanError('Failed to check VIN. Please try again.')
-      toast({
-        title: "Error",
-        description: "Failed to check VIN. Please check your internet connection.",
-        variant: "destructive"
-      })
+      console.error('Error al verificar el VIN:', error);
+      setStatusMessage('Error de red al verificar el VIN.');
+      setMake('');
+      setModel('');
+      setModelYear('');
+      setBodyClass('');
+      setVehicleType('');
+      setEngineCylinders('');
+      setFuelType('');
+      setPlantCountry('');
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }, [onVehicleDataFound, toast])
+  };
 
-  const handleVinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newVin = e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, '') // Only allow alphanumeric, uppercase
-    setVin(newVin)
-    if (newVin.length === 17) {
-      checkVin(newVin)
+  // Función para manejar el cambio manual del VIN en el input
+  const handleVinInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newVin = e.target.value.toUpperCase(); // Convertir a mayúsculas
+    setVin(newVin);
+    // Opcional: Si quieres que se verifique automáticamente al escribir,
+    // puedes llamar a handleVinDetected aquí con un debounce.
+    // Por ahora, lo haremos con un botón o al perder el foco.
+  };
+
+  // Función para verificar el VIN cuando se presiona un botón o se pierde el foco
+  const triggerVinCheck = () => {
+    if (vin) {
+      handleVinDetected(vin);
     } else {
-      setVinStatus('idle')
+      setStatusMessage('Por favor, introduce un VIN.');
     }
-  }
+  };
 
-  const handleVinDetectedFromScanner = (scannedVin: string) => {
-    setVin(scannedVin)
-    setIsScanning(false) // Stop scanning once VIN is detected
-    checkVin(scannedVin)
-  }
-
-  const startScanning = () => {
-    setScanError(null); // Clear any previous scan errors
-    setIsScanning(true);
-  }
-
-  const stopScanning = () => {
-    setIsScanning(false);
-  }
 
   return (
-    <Card className="h-full flex flex-col">
-      <CardHeader>
-        <CardTitle className="flex items-center space-x-2">
-          <Car className="w-5 h-5" />
-          <span>Smart VIN Input</span>
-        </CardTitle>
-        <CardDescription>
-          Enter VIN manually or scan with camera to auto-fill vehicle details.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex-grow flex flex-col space-y-6">
-        {/* VIN Input Section */}
-        <div className="space-y-2">
-          <Label htmlFor="vin">Vehicle Identification Number (VIN)</Label>
+    <div className="container mx-auto p-4">
+      <h3 className="text-2xl font-bold mb-4">Gestión de Vehículos</h3>
+
+      <div className="mb-6 p-4 border rounded-lg shadow-sm">
+        <h4 className="text-xl font-semibold mb-3">Verificar VIN</h4>
+        <SmartVinInput onVinDetected={handleVinDetected} /> {/* Pasa la función al SmartVinInput */}
+
+        <div className="mt-4">
+          <Label htmlFor="vinInput" className="block text-sm font-medium text-gray-700 mb-1">
+            O introduce el VIN manualmente:
+          </Label>
           <div className="flex space-x-2">
             <Input
-              id="vin"
-              name="vin"
-              placeholder="17-character VIN"
+              id="vinInput"
+              type="text"
               value={vin}
-              onChange={handleVinChange}
-              className="font-mono uppercase flex-grow"
-              maxLength={17}
-              disabled={isLoading || disabled || isScanning} // Disable input while scanning
+              onChange={handleVinInputChange}
+              placeholder="Introduce el VIN aquí"
+              className="flex-grow"
+              maxLength={17} // Los VINs tienen 17 caracteres
             />
-            <Button
-              type="button"
-              onClick={startScanning} // <-- Botón para iniciar el escaneo
-              disabled={isLoading || disabled || isScanning}
-              className="shrink-0"
-            >
-              <Scan className="w-4 h-4" />
+            <Button onClick={triggerVinCheck} disabled={isLoading || !vin}>
+              {isLoading ? 'Verificando...' : 'Verificar VIN'}
             </Button>
-          </div>
-          <div className="text-xs text-gray-500 flex items-center justify-between">
-            <span>{vin.length}/17 characters</span>
-            {vinStatus === 'checking' && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
-            {vinStatus === 'valid' && <CheckCircle className="h-4 w-4 text-green-500" />}
-            {vinStatus === 'invalid' && <XCircle className="h-4 w-4 text-red-500" />}
           </div>
         </div>
 
-        {/* Scanner Section */}
-        {isScanning && ( // <-- Renderiza el escáner SOLO si isScanning es true
-          <div className="relative w-full h-64 bg-gray-200 dark:bg-gray-700 rounded-md overflow-hidden flex items-center justify-center">
-            <DynamicVinScanner onVinDetected={handleVinDetectedFromScanner} onError={(error) => setScanError(error)} />
-            <Button
-              variant="destructive"
-              size="sm"
-              className="absolute top-2 right-2 z-10"
-              onClick={stopScanning} // <-- Botón para detener el escaneo
-            >
-              Stop Scan
-            </Button>
+        {statusMessage && (
+          <p className={`mt-3 text-sm ${statusMessage.includes('Error') || statusMessage.includes('No se pudo') ? 'text-red-600' : 'text-green-600'}`}>
+            {statusMessage}
+          </p>
+        )}
+      </div>
+
+      {/* Formulario para mostrar los datos del vehículo */}
+      <div className="p-4 border rounded-lg shadow-sm">
+        <h4 className="text-xl font-semibold mb-3">Detalles del Vehículo</h4>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <Label htmlFor="make">Marca</Label>
+            <Input id="make" type="text" value={make} onChange={(e) => setMake(e.target.value)} placeholder="Marca" />
           </div>
-        )}
-
-        {scanError && (
-          <Alert variant="destructive">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>Scan Error</AlertTitle>
-            <AlertDescription>{scanError}</AlertDescription>
-          </Alert>
-        )}
-
-        {/* VIN Details Section (Optional, based on your original SmartVinInput logic) */}
-        {/* ... (Your existing VIN details display logic goes here) ... */}
-      </CardContent>
-    </Card>
-  )
+          <div>
+            <Label htmlFor="model">Modelo</Label>
+            <Input id="model" type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder="Modelo" />
+          </div>
+          <div>
+            <Label htmlFor="modelYear">Año del Modelo</Label>
+            <Input id="modelYear" type="text" value={modelYear} onChange={(e) => setModelYear(e.target.value)} placeholder="Año" />
+          </div>
+          <div>
+            <Label htmlFor="bodyClass">Clase de Carrocería</Label>
+            <Input id="bodyClass" type="text" value={bodyClass} onChange={(e) => setBodyClass(e.target.value)} placeholder="Clase de Carrocería" />
+          </div>
+          <div>
+            <Label htmlFor="vehicleType">Tipo de Vehículo</Label>
+            <Input id="vehicleType" type="text" value={vehicleType} onChange={(e) => setVehicleType(e.target.value)} placeholder="Tipo de Vehículo" />
+          </div>
+          <div>
+            <Label htmlFor="engineCylinders">Cilindros del Motor</Label>
+            <Input id="engineCylinders" type="text" value={engineCylinders} onChange={(e) => setEngineCylinders(e.target.value)} placeholder="Cilindros" />
+          </div>
+          <div>
+            <Label htmlFor="fuelType">Tipo de Combustible</Label>
+            <Input id="fuelType" type="text" value={fuelType} onChange={(e) => setFuelType(e.target.value)} placeholder="Tipo de Combustible" />
+          </div>
+          <div>
+            <Label htmlFor="plantCountry">País de Fabricación</Label>
+            <Input id="plantCountry" type="text" value={plantCountry} onChange={(e) => setPlantCountry(e.target.value)} placeholder="País de Fabricación" />
+          </div>
+          {/* Añade más campos aquí según los datos que quieras mostrar */}
+        </div>
+        <Button className="mt-4">Guardar Vehículo</Button> {/* Ejemplo de botón para guardar */}
+      </div>
+    </div>
+  );
 }
