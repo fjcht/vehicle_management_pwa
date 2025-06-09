@@ -1,12 +1,12 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { Camera, X, Check, Loader2, AlertTriangle, Smartphone, Monitor, QrCode } from 'lucide-react' // Añadido QrCode
-import { Button } from './ui/button'
-import { Input } from './ui/input'
-import { Label } from './ui/label'
-import { Badge } from './ui/badge'
-import { useToast } from './ui/use-toast'
+import { Camera, X, Check, Loader2, AlertTriangle, Smartphone, Monitor, QrCode } from 'lucide-react'
+import { Button } from '@/app/components/ui/button' // Corregido: '@/app/components/ui/button'
+import { Input } from '@/app/components/ui/input'   // Corregido: '@/app/components/ui/input'
+import { Label } from '@/app/components/ui/label'   // Corregido: '@/app/components/ui/label'
+import { Badge } from '@/app/components/ui/badge'   // Corregido: '@/app/components/ui/badge'
+import { useToast } from '@/app/components/ui/use-toast' // Corregido: '@/app/components/ui/use-toast'
 
 // Importación de la librería ZXing
 import { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat } from '@zxing/library';
@@ -24,8 +24,6 @@ interface CameraError {
 
 // Definición de tipos para los datos de la NHTSA (si los usas)
 interface NHTSAVehicleData {
-  // Define la estructura de los datos del vehículo aquí
-  // Por ejemplo:
   Make: string;
   Model: string;
   ModelYear: string;
@@ -92,24 +90,15 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
     }
     addDebugInfo('Initializing ZXing Code Reader...');
     try {
-      // Configurar hints para mejorar la detección
       const hints = new Map();
       const formats = [
-        BarcodeFormat.CODE_39,
-        BarcodeFormat.CODE_93,
-        BarcodeFormat.CODE_128,
-        BarcodeFormat.EAN_8,
-        BarcodeFormat.EAN_13,
-        BarcodeFormat.QR_CODE,
-        BarcodeFormat.DATA_MATRIX,
-        BarcodeFormat.AZTEC,
-        BarcodeFormat.PDF_417, // VINs a veces usan PDF417
-        BarcodeFormat.ITF,
-        BarcodeFormat.UPC_A,
-        BarcodeFormat.UPC_E,
+        BarcodeFormat.CODE_39, BarcodeFormat.CODE_93, BarcodeFormat.CODE_128,
+        BarcodeFormat.EAN_8, BarcodeFormat.EAN_13, BarcodeFormat.QR_CODE,
+        BarcodeFormat.DATA_MATRIX, BarcodeFormat.AZTEC, BarcodeFormat.PDF_417,
+        BarcodeFormat.ITF, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
       ];
       hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
-      hints.set(DecodeHintType.TRY_HARDER, true); // Intentar más para encontrar el código
+      hints.set(DecodeHintType.TRY_HARDER, true);
 
       const reader = new BrowserMultiFormatReader(hints);
       codeReaderRef.current = reader;
@@ -127,101 +116,78 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
   // Función para validar si una cadena es un VIN (básica)
   const isValidVIN = (text: string): boolean => {
     if (text.length !== 17) return false;
-    if (/[IOQioq]/.test(text)) return false; // I, O, Q no se usan en VINs
-    if (!/^[A-HJ-NPR-Z0-9]{17}$/i.test(text)) return false; // Solo caracteres válidos
+    if (/[IOQioq]/.test(text)) return false;
+    if (!/^[A-HJ-NPR-Z0-9]{17}$/i.test(text)) return false;
     return true;
   };
 
   const checkCameraPermissions = useCallback(async () => {
     setIsCheckingPermissions(true)
+    setCameraError(null); // Limpiar errores anteriores
     addDebugInfo('=== CHECKING CAMERA PERMISSIONS ===')
 
     try {
-      addDebugInfo('Checking MediaDevices API availability...')
-      if (!navigator.mediaDevices) {
-        throw new Error('MediaDevices API not supported in this browser')
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('MediaDevices API or getUserMedia not supported in this browser');
       }
-      addDebugInfo('✔ MediaDevices API available')
+      addDebugInfo('✔ MediaDevices API and getUserMedia available');
 
-      if (!navigator.mediaDevices.getUserMedia) {
-        throw new Error('getUserMedia not supported in this browser')
-      }
-      addDebugInfo('✔ getUserMedia available')
-
-      addDebugInfo('Checking Permissions API...')
       if ('permissions' in navigator) {
         try {
-          addDebugInfo('Querying camera permission...')
-          const permission = await navigator.permissions.query({ name: 'camera' as PermissionName })
-          setPermissionStatus(permission.state)
-          addDebugInfo(`✔ Permission API result: ${permission.state}`)
-
+          const permission = await navigator.permissions.query({ name: 'camera' as PermissionName });
+          setPermissionStatus(permission.state);
+          addDebugInfo(`✔ Permission API result: ${permission.state}`);
           permission.onchange = () => {
-            setPermissionStatus(permission.state)
-            addDebugInfo(`Permission changed to: ${permission.state}`)
-          }
+            setPermissionStatus(permission.state);
+            addDebugInfo(`Permission changed to: ${permission.state}`);
+          };
         } catch (permError) {
-          addDebugInfo(`✖ Permissions API error: ${permError}`)
-          setPermissionStatus('unknown')
+          addDebugInfo(`✖ Permissions API query error: ${permError}`);
+          setPermissionStatus('unknown');
         }
       } else {
-        addDebugInfo('✖ Permissions API not available')
-        setPermissionStatus('unknown')
+        addDebugInfo('✖ Permissions API not available');
+        setPermissionStatus('unknown');
       }
 
-      addDebugInfo('Testing camera access with basic constraints...')
+      // Attempt to get a stream to confirm actual access
       try {
-        addDebugInfo('Calling getUserMedia for permission test...')
-        const testStream = await navigator.mediaDevices.getUserMedia({ video: true })
-
-        addDebugInfo(`✔ Camera access test successful`)
-        testStream.getTracks().forEach((track, index) => {
-          addDebugInfo(`Test track ${index}: ${track.kind}, enabled: ${track.enabled}`)
-          track.stop()
-          addDebugInfo(`Test track ${index} stopped`)
-        })
-
-        setPermissionStatus('granted')
-        addDebugInfo('=== PERMISSION CHECK SUCCESSFUL ===')
-
-      } catch (testError) {
-        addDebugInfo(`✖ Camera access test failed: ${testError}`)
-        if (testError instanceof Error) {
-          addDebugInfo(`Test error name: ${testError.name}`)
-          addDebugInfo(`Test error message: ${testError.message}`)
-
-          if (testError.name === 'NotAllowedError') {
-            setPermissionStatus('denied')
-            addDebugInfo('Permission status set to: denied')
-          } else if (testError.name === 'NotFoundError') {
-            setPermissionStatus('denied')
-            throw new Error('No camera found on this device')
-          } else if (testError.name === 'NotReadableError') {
-            setPermissionStatus('denied')
-            throw new Error('Camera is already in use by another application')
-          } else {
-            setPermissionStatus('unknown')
-            addDebugInfo(`Unexpected error during permission test: ${testError.name}`)
-          }
+        const testStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        addDebugInfo(`✔ Camera access test successful`);
+        testStream.getTracks().forEach(track => track.stop());
+        setPermissionStatus('granted');
+      } catch (testError: any) {
+        addDebugInfo(`✖ Camera access test failed: ${testError.name} - ${testError.message}`);
+        if (testError.name === 'NotAllowedError') {
+          setPermissionStatus('denied');
+        } else if (testError.name === 'NotFoundError') {
+          setPermissionStatus('denied'); // No camera found
+          setCameraError({ name: 'NoCameraFound', message: 'No camera found on this device.' });
+        } else if (testError.name === 'NotReadableError') {
+          setPermissionStatus('denied'); // Camera in use
+          setCameraError({ name: 'CameraInUse', message: 'Camera is already in use by another application.' });
+        } else {
+          setPermissionStatus('unknown');
+          setCameraError({ name: testError.name, message: testError.message });
         }
       }
-    } catch (error) {
-      addDebugInfo(`=== PERMISSION CHECK FAILED ===`)
-      addDebugInfo(`Permission check error: ${error}`)
-      console.error('Error accessing camera:', error)
+    } catch (error: any) {
+      addDebugInfo(`=== PERMISSION CHECK FAILED ===`);
+      addDebugInfo(`Permission check error: ${error.message}`);
       setCameraError({
-        name: 'PermissionError',
-        message: error instanceof Error ? error.message : 'Unknown permission error'
-      })
+        name: error.name || 'PermissionError',
+        message: error.message || 'Unknown permission error'
+      });
     } finally {
-      setIsCheckingPermissions(false)
-      addDebugInfo('Permission check completed')
+      setIsCheckingPermissions(false);
+      addDebugInfo('Permission check completed');
     }
-  }, [addDebugInfo])
+  }, [addDebugInfo]);
 
   const enumerateCameras = useCallback(async () => {
-    addDebugInfo('Enumerating media devices...')
+    addDebugInfo('Enumerating media devices...');
     try {
+      // Request a temporary stream to ensure labels are available
       let tempStream: MediaStream | null = null;
       if (permissionStatus === 'granted') {
         try {
@@ -278,6 +244,7 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
       (constraints.video as MediaTrackConstraints).deviceId = { exact: selectedCameraId };
       addDebugInfo(`Using specific camera ID: ${selectedCameraId}`);
     } else {
+      // Fallback if no specific ID, try environment facing mode
       (constraints.video as MediaTrackConstraints).facingMode = 'environment';
       addDebugInfo(`No specific camera ID, trying 'environment' facingMode.`);
     }
@@ -330,33 +297,14 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
         throw new Error('Camera permission denied. Please enable camera access in your browser settings.')
       }
 
-      addDebugInfo('Checking getUserMedia availability...')
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('getUserMedia not supported in this browser')
       }
       addDebugInfo('✔ getUserMedia is available')
 
-      let videoElement = videoRef.current
-      let retryCount = 0
-      const maxRetries = 10
-
-      while (!videoElement && retryCount < maxRetries) {
-        addDebugInfo(`Video element not ready, waiting... (attempt ${retryCount + 1}/${maxRetries})`)
-        await new Promise(resolve => setTimeout(resolve, 100))
-        videoElement = videoRef.current
-        retryCount++
-      }
-
-      if (!videoElement) {
-        addDebugInfo('✖ Video element still not available after retries')
-        throw new Error('Video element not available in DOM. Please try again.')
-      }
-
-      addDebugInfo('✔ Video element is available')
-      addDebugInfo(`Video element properties: tagName=${videoElement.tagName}, readyState=${videoElement.readyState}, networkState=${videoElement.networkState}`)
-
+      // No necesitamos el bucle de reintento aquí, el useEffect de ZXing esperará el videoRef
       const constraints = getCameraConstraints();
-      addDebugInfo(`Attempting to start camera with constraints: ${JSON.stringify(constraints, null, 2)}`);
+      addDebugInfo(`Attempting to get stream with constraints: ${JSON.stringify(constraints, null, 2)}`);
 
       let stream: MediaStream | null = null;
       try {
@@ -374,18 +322,14 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
             addDebugInfo(`Video settings: ${JSON.stringify(settings)}`);
           }
         });
-      } catch (constraintError) {
-        addDebugInfo(`✖ FAILED with specified constraints: ${constraintError}`);
-        if (constraintError instanceof Error) {
-          addDebugInfo(`Error name: ${constraintError.name}`);
-          addDebugInfo(`Error message: ${constraintError.message}`);
-        }
+      } catch (constraintError: any) {
+        addDebugInfo(`✖ FAILED with specified constraints: ${constraintError.name} - ${constraintError.message}`);
         addDebugInfo('Attempting fallback to basic video: true constraints...');
         try {
           stream = await navigator.mediaDevices.getUserMedia({ video: true });
           addDebugInfo('✔ SUCCESS with fallback constraints: { video: true }');
-        } catch (fallbackError) {
-          addDebugInfo(`✖ FAILED with fallback constraints: ${fallbackError}`);
+        } catch (fallbackError: any) {
+          addDebugInfo(`✖ FAILED with fallback constraints: ${fallbackError.name} - ${fallbackError.message}`);
           throw fallbackError;
         }
       }
@@ -394,125 +338,22 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
         throw new Error('Failed to get camera stream with any constraint set');
       }
 
-      addDebugInfo('Final video element check before stream assignment...')
-      const finalVideoElement = videoRef.current
-      if (!finalVideoElement) {
-        addDebugInfo('✖ Video element disappeared during camera setup')
-        stream.getTracks().forEach(track => track.stop())
-        throw new Error('Video element became unavailable during setup')
-      }
+      streamRef.current = stream; // Guardar el stream en la ref
+      setIsScanning(true); // Indicar que la cámara está activa
 
-      addDebugInfo('Setting up video element...')
-      addDebugInfo(`Final video element state: readyState=${finalVideoElement.readyState}, networkState=${finalVideoElement.networkState}`)
+      addDebugInfo('=== CAMERA STREAM OBTAINED SUCCESSFULLY ===');
 
-      try {
-        finalVideoElement.srcObject = stream
-        streamRef.current = stream
-        addDebugInfo('✔ Stream assigned to video element successfully')
-      } catch (streamError) {
-        addDebugInfo(`✖ Error assigning stream to video: ${streamError}`)
-        stream.getTracks().forEach(track => track.stop())
-        throw new Error(`Failed to assign stream to video element: ${streamError}`)
-      }
-
-      await new Promise<void>((resolve, reject) => {
-        const timeoutId = setTimeout(() => {
-          finalVideoElement.removeEventListener('loadedmetadata', onLoadedMetadata)
-          finalVideoElement.removeEventListener('canplay', onCanPlay)
-          finalVideoElement.removeEventListener('error', onError)
-          addDebugInfo('✖ Video ready timeout')
-          reject(new Error('Video did not become ready in time'))
-        }, 5000) // 5 seconds timeout
-
-        const onLoadedMetadata = () => {
-          addDebugInfo(`✔ Video metadata loaded: ${finalVideoElement.videoWidth}x${finalVideoElement.videoHeight}`)
-        }
-
-        const onCanPlay = () => {
-          addDebugInfo('✔ Video can play')
-          clearTimeout(timeoutId)
-          finalVideoElement.removeEventListener('loadedmetadata', onLoadedMetadata)
-          finalVideoElement.removeEventListener('canplay', onCanPlay)
-          finalVideoElement.removeEventListener('error', onError)
-          resolve()
-        }
-
-        const onError = (e: Event) => {
-          addDebugInfo(`✖ Video error event: ${e}`)
-          addDebugInfo(`Video error details: ${finalVideoElement.error?.message || 'Unknown error'}`)
-          clearTimeout(timeoutId)
-          finalVideoElement.removeEventListener('loadedmetadata', onLoadedMetadata)
-          finalVideoElement.removeEventListener('canplay', onCanPlay)
-          finalVideoElement.removeEventListener('error', onError)
-          reject(new Error(`Video playback error: ${finalVideoElement.error?.message || 'Unknown'}`))
-        }
-
-        finalVideoElement.addEventListener('loadedmetadata', onLoadedMetadata)
-        finalVideoElement.addEventListener('canplay', onCanPlay)
-        finalVideoElement.addEventListener('error', onError)
-
-        if (finalVideoElement.readyState >= 3) { // HAVE_FUTURE_DATA or higher
-          addDebugInfo('Video already can play, resolving immediately')
-          clearTimeout(timeoutId)
-          finalVideoElement.removeEventListener('loadedmetadata', onLoadedMetadata)
-          finalVideoElement.removeEventListener('canplay', onCanPlay)
-          finalVideoElement.removeEventListener('error', onError)
-          resolve()
-        } else {
-          finalVideoElement.play().catch(playError => {
-            addDebugInfo(`Error attempting to play video: ${playError}`);
-          });
-        }
-      })
-
-      setIsScanning(true)
-      addDebugInfo('=== CAMERA STARTED SUCCESSFULLY ===')
-
-      // Iniciar el escaneo de códigos de barras/QR con ZXing
-      if (codeReaderRef.current && videoRef.current) {
-        addDebugInfo('Starting ZXing barcode scan...');
-        setZxingStatus('Scanning for codes...');
-        codeReaderRef.current.decodeFromVideoDevice(selectedCameraId || undefined, videoRef.current, (result, error) => {
-          if (result) {
-            addDebugInfo(`ZXing Detected: ${result.getText()} (Format: ${result.getBarcodeFormat().toString()})`);
-            const detectedCode = result.getText();
-            // Aquí puedes añadir lógica para verificar si el código es un VIN
-            // Por ejemplo, si esperas que el VIN esté en un QR o CODE_39
-            if (isValidVIN(detectedCode)) {
-              setManualVin(detectedCode);
-              stopCamera();
-              addDebugInfo(`VIN Detected via Barcode/QR: ${detectedCode}`);
-              toast({
-                title: "VIN Detected!",
-                description: `Found VIN: ${detectedCode}. Please verify and submit.`,
-                variant: "success"
-              });
-            } else {
-              setZxingStatus(`Code found, but not a valid VIN: ${detectedCode.substring(0, 20)}...`);
-            }
-          }
-          if (error && !codeReaderRef.current?.is
-            ) { // Evitar errores de "No MultiFormat Readers" que son comunes si no hay código
-            // addDebugInfo(`ZXing Error: ${error}`); // Descomentar para depurar errores de escaneo
-            setZxingStatus('Scanning...'); // Mantener el estado de escaneo si no es un error crítico
-          }
-        });
-      } else {
-        addDebugInfo('ZXing reader or video element not ready, cannot start scan.');
-        setZxingStatus('Scanner not ready.');
-      }
-
-    } catch (error) {
-      addDebugInfo(`=== CAMERA START FAILED ===`)
-      addDebugInfo(`Camera start error: ${error}`)
-      console.error('Error starting camera:', error)
+    } catch (error: any) {
+      addDebugInfo(`=== CAMERA START FAILED ===`);
+      addDebugInfo(`Camera start error: ${error.name}: ${error.message}`);
+      console.error('Error starting camera:', error);
       setCameraError({
-        name: error instanceof Error ? error.name : 'UnknownError',
-        message: error instanceof Error ? error.message : 'Unknown error occurred while starting camera'
-      })
-      stopCamera()
+        name: error.name || 'UnknownError',
+        message: error.message || 'Unknown error occurred while starting camera'
+      });
+      stopCamera();
     }
-  }, [toast, permissionStatus, getCameraConstraints, addDebugInfo, isMobile, stopCamera, selectedCameraId]);
+  }, [toast, permissionStatus, getCameraConstraints, addDebugInfo, stopCamera]);
 
   const decodeVin = useCallback(async () => {
     if (!manualVin) {
@@ -601,6 +442,83 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
     };
   }, [addDebugInfo, initializeZxingReader]);
 
+  // Efecto para manejar el inicio/parada del escaneo ZXing
+  useEffect(() => {
+    if (isScanning && videoRef.current && streamRef.current && codeReaderRef.current) {
+      addDebugInfo('Attaching stream to video element and starting ZXing scan...');
+      const videoElement = videoRef.current;
+      videoElement.srcObject = streamRef.current;
+
+      // Esperar a que el video esté listo para reproducirse
+      const onCanPlay = () => {
+        addDebugInfo('Video element ready for playback. Starting ZXing decode...');
+        setZxingStatus('Scanning for codes...');
+        codeReaderRef.current?.decodeFromVideoDevice(
+          selectedCameraId || undefined,
+          videoElement,
+          (result, error) => {
+            if (result) {
+              addDebugInfo(`ZXing Detected: ${result.getText()} (Format: ${result.getBarcodeFormat().toString()})`);
+              const detectedCode = result.getText();
+              if (isValidVIN(detectedCode)) {
+                setManualVin(detectedCode);
+                stopCamera();
+                addDebugInfo(`VIN Detected via Barcode/QR: ${detectedCode}`);
+                toast({
+                  title: "VIN Detected!",
+                  description: `Found VIN: ${detectedCode}. Please verify and submit.`,
+                  variant: "success"
+                });
+              } else {
+                setZxingStatus(`Code found, but not a valid VIN: ${detectedCode.substring(0, 20)}...`);
+              }
+            }
+            // Solo loguear errores si no es el error de "No MultiFormat Readers" que es normal si no hay código
+            if (error && codeReaderRef.current && !error.message.includes('No MultiFormat Readers')) {
+              // addDebugInfo(`ZXing Error: ${error}`); // Descomentar para depurar errores de escaneo
+              setZxingStatus('Scanning...'); // Mantener el estado de escaneo si no es un error crítico
+            }
+          }
+        );
+      };
+
+      const onError = (e: Event) => {
+        addDebugInfo(`Video element error: ${e.type}`);
+        setCameraError({ name: 'VideoError', message: 'Video element encountered an error.' });
+        stopCamera();
+      };
+
+      videoElement.addEventListener('canplay', onCanPlay);
+      videoElement.addEventListener('error', onError);
+
+      // Si el video ya está listo, ejecutar onCanPlay inmediatamente
+      if (videoElement.readyState >= 3) { // HAVE_FUTURE_DATA or higher
+        onCanPlay();
+      } else {
+        videoElement.play().catch(playError => {
+          addDebugInfo(`Error attempting to play video: ${playError}`);
+          setCameraError({ name: 'VideoPlayError', message: `Failed to play video: ${playError.message}` });
+          stopCamera();
+        });
+      }
+
+      return () => {
+        addDebugInfo('Cleaning up ZXing effect...');
+        videoElement.removeEventListener('canplay', onCanPlay);
+        videoElement.removeEventListener('error', onError);
+        if (codeReaderRef.current) {
+          codeReaderRef.current.reset();
+          addDebugInfo('ZXing reader reset during cleanup.');
+        }
+      };
+    } else if (!isScanning && codeReaderRef.current) {
+      // Si isScanning es false, asegúrate de que el lector esté detenido
+      addDebugInfo('isScanning is false, ensuring ZXing reader is reset.');
+      codeReaderRef.current.reset();
+    }
+  }, [isScanning, selectedCameraId, addDebugInfo, isValidVIN, stopCamera, toast]);
+
+
   // Efecto para reiniciar la cámara si cambia la cámara seleccionada
   useEffect(() => {
     if (isScanning && selectedCameraId) {
@@ -617,7 +535,7 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
       {isScanning ? (
         <div className="relative w-full max-w-md aspect-video bg-gray-900 rounded-lg overflow-hidden">
           <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"></video>
-          {/* Marco de posici├│n del VIN - SIN FONDO NEGRO */}
+          {/* Marco de posición del VIN - SIN FONDO NEGRO */}
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="border-2 border-white border-dashed w-3/4 h-16 rounded-lg flex items-center justify-center">
               <span className="text-white text-sm font-medium">Position Barcode/QR here</span>
@@ -678,7 +596,7 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
             <Button
               onClick={startCamera}
               className="w-full"
-              disabled={isCheckingPermissions || permissionStatus === 'denied' || !isZxingReady} // Deshabilitar si ZXing no está listo
+              disabled={isCheckingPermissions || permissionStatus === 'denied' || !isZxingReady}
               size={isMobile ? "lg" : "default"}
             >
               {isCheckingPermissions ? (
