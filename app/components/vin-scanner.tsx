@@ -12,7 +12,7 @@ import { useToast } from '@/app/components/ui/use-toast'
 import { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat } from '@zxing/library';
 
 interface VinScannerProps {
-  onVinDetected: (vin: string, vehicleData?: NHTSAVobileData) => void
+  onVinDetected: (vin: string, vehicleData?: NHTSAVehicleData) => void
   initialVin?: string
 }
 
@@ -115,12 +115,12 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
   }, [addDebugInfo]);
 
   // Función para validar si una cadena es un VIN (básica)
-  const isValidVIN = (text: string): boolean => {
+  const isValidVIN = useCallback((text: string): boolean => {
     if (text.length !== 17) return false;
     if (/[IOQioq]/.test(text)) return false;
     if (!/^[A-HJ-NPR-Z0-9]{17}$/i.test(text)) return false;
     return true;
-  };
+  }, []); // <-- Añadido useCallback aquí
 
   const checkCameraPermissions = useCallback(async () => {
     setIsCheckingPermissions(true)
@@ -458,103 +458,114 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
     let currentStream = streamRef.current;
     let codeReader = codeReaderRef.current;
 
-    if (isScanning && videoElement && currentStream && codeReader) {
-      addDebugInfo('Attaching stream to video element and preparing ZXing scan...');
+    // Si no estamos escaneando o no tenemos los elementos necesarios, limpiar y salir
+    if (!isScanning || !videoElement || !currentStream || !codeReader) {
+      if (codeReader) {
+        addDebugInfo('isScanning is false or elements missing, ensuring ZXing reader is reset.');
+        codeReader.reset();
+      }
+      // Asegurarse de que el stream se detenga si el componente se desmonta o el efecto se limpia
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+      return; // Salir temprano si no hay escaneo activo
+    }
 
-      // Solo asignar srcObject si es diferente para evitar interrupciones innecesarias
-      if (videoElement.srcObject !== currentStream) {
-        videoElement.srcObject = currentStream;
-        addDebugInfo('Video srcObject assigned.');
+    addDebugInfo('Attaching stream to video element and preparing ZXing scan...');
+
+    // Solo asignar srcObject si es diferente para evitar interrupciones innecesarias
+    if (videoElement.srcObject !== currentStream) {
+      videoElement.srcObject = currentStream;
+      addDebugInfo('Video srcObject assigned.');
+    }
+
+    const onCanPlay = () => {
+      addDebugInfo('Video element ready for playback. Starting ZXing decode...');
+      setZxingStatus('Scanning for codes...');
+
+      // Asegurarse de que el video tenga dimensiones válidas antes de intentar getImageData
+      if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
+        addDebugInfo('Video element has zero dimensions, waiting for videoWidth/Height...');
+        // Podríamos añadir un setTimeout aquí o esperar otro 'canplay' event si es necesario
+        return;
       }
 
-      const onCanPlay = () => {
-        addDebugInfo('Video element ready for playback. Starting ZXing decode...');
-        setZxingStatus('Scanning for codes...');
-
-        // Asegurarse de que el video tenga dimensiones válidas antes de intentar getImageData
-        if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
-          addDebugInfo('Video element has zero dimensions, waiting for videoWidth/Height...');
-          // Podríamos añadir un setTimeout aquí o esperar otro 'canplay' event si es necesario
-          return;
-        }
-
-        // @ts-ignore
-        if (!codeReader.isDecoding && !codeReader.isScanning) { // Asegurarse de que no esté ya decodificando
-          codeReader.decodeFromVideoDevice(
-            selectedCameraId || undefined,
-            videoElement,
-            (result, error) => {
-              if (result) {
-                addDebugInfo(`ZXing Detected: ${result.getText()} (Format: ${result.getBarcodeFormat().toString()})`);
-                const detectedCode = result.getText();
-                if (isValidVIN(detectedCode)) {
-                  setManualVin(detectedCode);
-                  stopCamera(); // Detener la cámara al detectar un VIN válido
-                  addDebugInfo(`VIN Detected via Barcode/QR: ${detectedCode}`);
-                  toast({
-                    title: "VIN Detected!",
-                    description: `Found VIN: ${detectedCode}. Please verify and submit.`,
-                    variant: "success"
-                  });
-                } else {
-                  setZxingStatus(`Code found, but not a valid VIN: ${detectedCode.substring(0, 20)}...`);
-                }
-              }
-              if (error && !error.message.includes('No MultiFormat Readers')) {
-                addDebugInfo(`ZXing Error: ${error}`);
-                setZxingStatus('Scanning...');
+      // @ts-ignore
+      if (!codeReader.isDecoding && !codeReader.isScanning) { // Asegurarse de que no esté ya decodificando
+        codeReader.decodeFromVideoDevice(
+          selectedCameraId || undefined,
+          videoElement,
+          (result, error) => {
+            if (result) {
+              addDebugInfo(`ZXing Detected: ${result.getText()} (Format: ${result.getBarcodeFormat().toString()})`);
+              const detectedCode = result.getText();
+              if (isValidVIN(detectedCode)) { // Usar la función memoizada
+                setManualVin(detectedCode);
+                stopCamera(); // Usar la función memoizada
+                addDebugInfo(`VIN Detected via Barcode/QR: ${detectedCode}`);
+                toast({ // Usar la función toast
+                  title: "VIN Detected!",
+                  description: `Found VIN: ${detectedCode}. Please verify and submit.`,
+                  variant: "success"
+                });
+              } else {
+                setZxingStatus(`Code found, but not a valid VIN: ${detectedCode.substring(0, 20)}...`);
               }
             }
-          );
-        } else {
-          addDebugInfo('ZXing reader already decoding or scanning. Skipping redundant call.');
-        }
-      };
-
-      const onError = (e: Event) => {
-        addDebugInfo(`Video element error: ${e.type}`);
-        setCameraError({ name: 'VideoError', message: 'Video element encountered an error.' });
-        stopCamera();
-      };
-
-      videoElement.addEventListener('canplay', onCanPlay);
-      videoElement.addEventListener('error', onError);
-
-      // Intentar reproducir el video.
-      // Si el video ya está listo, ejecutar onCanPlay inmediatamente
-      if (videoElement.readyState >= 3) { // HAVE_FUTURE_DATA or higher
-        onCanPlay();
+            if (error && !error.message.includes('No MultiFormat Readers')) {
+              addDebugInfo(`ZXing Error: ${error}`);
+              setZxingStatus('Scanning...');
+            }
+          }
+        );
       } else {
-        videoElement.play().catch(playError => {
-          addDebugInfo(`Error attempting to play video: ${playError}`);
-          setCameraError({ name: 'VideoPlayError', message: `Failed to play video: ${playError.message}` });
-          stopCamera();
-        });
+        addDebugInfo('ZXing reader already decoding or scanning. Skipping redundant call.');
       }
+    };
 
-      return () => {
-        addDebugInfo('Cleaning up ZXing effect...');
-        videoElement.removeEventListener('canplay', onCanPlay);
-        videoElement.removeEventListener('error', onError);
-        if (codeReader) {
-          codeReader.reset();
-          addDebugInfo('ZXing reader reset during cleanup.');
-        }
-        // Asegurarse de que el stream se detenga si el componente se desmonta o el efecto se limpia
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach(track => track.stop());
-          streamRef.current = null;
-        }
-        if (videoRef.current) {
-          videoRef.current.srcObject = null;
-        }
-      };
-    } else if (!isScanning && codeReader) {
-      addDebugInfo('isScanning is false, ensuring ZXing reader is reset.');
-      codeReader.reset();
+    const onError = (e: Event) => {
+      addDebugInfo(`Video element error: ${e.type}`);
+      setCameraError({ name: 'VideoError', message: 'Video element encountered an error.' });
+      stopCamera();
+    };
+
+    videoElement.addEventListener('canplay', onCanPlay);
+    videoElement.addEventListener('error', onError);
+
+    // Intentar reproducir el video.
+    // Si el video ya está listo, ejecutar onCanPlay inmediatamente
+    if (videoElement.readyState >= 3) { // HAVE_FUTURE_DATA or higher
+      onCanPlay();
+    } else {
+      videoElement.play().catch(playError => {
+        addDebugInfo(`Error attempting to play video: ${playError}`);
+        setCameraError({ name: 'VideoPlayError', message: `Failed to play video: ${playError.message}` });
+        stopCamera();
+      });
     }
-  }, [isScanning, selectedCameraId, addDebugInfo, isValidVIN, toast, stopCamera]);
 
+    return () => {
+      addDebugInfo('Cleaning up ZXing effect...');
+      videoElement.removeEventListener('canplay', onCanPlay);
+      videoElement.removeEventListener('error', onError);
+      if (codeReader) {
+        codeReader.reset();
+        addDebugInfo('ZXing reader reset during cleanup.');
+      }
+      // Asegurarse de que el stream se detenga si el componente se desmonta o el efecto se limpia
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    };
+  }, [isScanning, selectedCameraId, addDebugInfo, isValidVIN, toast, stopCamera]); // Dependencias del useEffect
 
   // Efecto para reiniciar la cámara si el usuario cambia la cámara seleccionada manualmente
   // SOLO si ya estamos escaneando.
