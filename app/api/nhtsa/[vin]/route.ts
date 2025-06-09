@@ -3,8 +3,8 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
-import { decodeVIN } from '@/lib/nhtsa';
+import { authOptions } from '@/app/lib/auth';
+import { decodeVIN } from '@/app/lib/nhtsa';
 
 export async function GET(
   request: NextRequest,
