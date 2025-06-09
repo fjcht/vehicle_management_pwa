@@ -473,7 +473,6 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
         setZxingStatus('Scanning for codes...');
         // Asegurarse de que el lector no esté ya decodificando del mismo dispositivo
         // Esto es para evitar múltiples llamadas a decodeFromVideoDevice
-        if (!codeReader.is
           // @ts-ignore - is, isDecoding, isScanning son propiedades internas de ZXing
           codeReader.isDecoding || !codeReader.isScanning) {
           codeReader.decodeFromVideoDevice(
