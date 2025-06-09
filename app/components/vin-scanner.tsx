@@ -1,22 +1,30 @@
+
 'use client'
 
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { BrowserMultiFormatReader, DecodeHintType, Result } from '@zxing/library'
+import Tesseract from 'tesseract.js'
 import { Alert, AlertDescription, AlertTitle } from '@/app/components/ui/alert'
-import { Loader2, CameraOff, Video, AlertTriangle, CheckCircle, XCircle, Play, StopCircle } from 'lucide-react'
+import { Loader2, CameraOff, Video, AlertTriangle, CheckCircle, XCircle, Play, StopCircle, QrCode, Type, Zap } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select'
 import { Label } from '@/app/components/ui/label'
 import { Button } from '@/app/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/app/components/ui/tabs'
 
 interface VinScannerProps {
   onVinDetected: (vin: string) => void
   onError?: (error: string) => void
 }
 
+type ScanMode = 'auto' | 'barcode' | 'ocr'
+
 export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
   const readerRef = useRef<BrowserMultiFormatReader | null>(null)
   const isMountedRef = useRef(true)
+  const scanIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const ocrTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const [isCameraReady, setIsCameraReady] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
@@ -24,6 +32,9 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('')
   const [scanResult, setScanResult] = useState<string | null>(null)
   const [isScanningActive, setIsScanningActive] = useState(false)
+  const [scanMode, setScanMode] = useState<ScanMode>('auto')
+  const [isOcrProcessing, setIsOcrProcessing] = useState(false)
+  const [scanStatus, setScanStatus] = useState<string>('Ready to scan')
 
   // Inicializar hints de forma segura
   const hints = React.useMemo(() => {
@@ -33,8 +44,24 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     return hintsMap
   }, [])
 
+  // Validar VIN
+  const isValidVin = useCallback((vin: string): boolean => {
+    const cleanVin = vin.toUpperCase().replace(/[^0-9A-Z]/g, '')
+    return cleanVin.length === 17 && /^[A-HJ-NPR-Z0-9]{17}$/.test(cleanVin)
+  }, [])
+
   // Cleanup seguro
   const cleanup = useCallback(() => {
+    if (scanIntervalRef.current) {
+      clearInterval(scanIntervalRef.current)
+      scanIntervalRef.current = null
+    }
+
+    if (ocrTimeoutRef.current) {
+      clearTimeout(ocrTimeoutRef.current)
+      ocrTimeoutRef.current = null
+    }
+
     if (readerRef.current) {
       try {
         readerRef.current.reset()
@@ -42,7 +69,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
         console.warn('[VIN Scanner] Error during reader reset:', error)
       }
     }
-    
+
     if (videoRef.current?.srcObject) {
       try {
         const stream = videoRef.current.srcObject as MediaStream
@@ -63,13 +90,135 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
   const stopScanning = useCallback(() => {
     console.log('[VIN Scanner] Stopping scanning...')
     cleanup()
-    
+
     if (isMountedRef.current) {
       setIsCameraReady(false)
       setIsScanningActive(false)
+      setIsOcrProcessing(false)
       setCameraError(null)
+      setScanStatus('Ready to scan')
     }
   }, [cleanup])
+
+  // OCR Processing
+  const processOCR = useCallback(async () => {
+    if (!videoRef.current || !canvasRef.current || !isMountedRef.current) return
+
+    try {
+      setIsOcrProcessing(true)
+      setScanStatus('Processing text recognition...')
+
+      const canvas = canvasRef.current
+      const video = videoRef.current
+      const ctx = canvas.getContext('2d')
+
+      if (!ctx) return
+
+      // Configurar canvas con las dimensiones del video
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
+
+      // Capturar frame del video
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+
+      // Definir área de recorte (marco central)
+      const cropX = canvas.width * 0.1
+      const cropY = canvas.height * 0.3
+      const cropWidth = canvas.width * 0.8
+      const cropHeight = canvas.height * 0.4
+
+      // Crear canvas recortado
+      const croppedCanvas = document.createElement('canvas')
+      const croppedCtx = croppedCanvas.getContext('2d')
+
+      if (!croppedCtx) return
+
+      croppedCanvas.width = cropWidth
+      croppedCanvas.height = cropHeight
+
+      croppedCtx.drawImage(
+        canvas, 
+        cropX, cropY, cropWidth, cropHeight,
+        0, 0, cropWidth, cropHeight
+      )
+
+      // Procesar con Tesseract
+      const { data: { text } } = await Tesseract.recognize(
+        croppedCanvas,
+        'eng',
+        {
+          logger: () => {}, // Silenciar logs
+          tessedit_char_whitelist: 'ABCDEFGHJKLMNPRSTUVWXYZ0123456789',
+          tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE,
+        }
+      )
+
+      if (!isMountedRef.current) return
+
+      // Buscar VIN en el texto
+      const vinMatches = text.match(/[A-HJ-NPR-Z0-9]{17}/g)
+
+      if (vinMatches) {
+        for (const match of vinMatches) {
+          if (isValidVin(match)) {
+            console.log('[VIN Scanner] VIN detected via OCR:', match)
+            setScanResult(match)
+            setScanStatus(`VIN detected: ${match}`)
+            onVinDetected(match)
+            setTimeout(stopScanning, 1000)
+            return
+          }
+        }
+      }
+
+      setScanStatus('Scanning for text...')
+
+    } catch (error: any) {
+      console.error('[VIN Scanner] OCR error:', error)
+      if (isMountedRef.current) {
+        setScanStatus('OCR processing failed')
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsOcrProcessing(false)
+      }
+    }
+  }, [isValidVin, onVinDetected, stopScanning])
+
+  // Barcode scanning
+  const processBarcodeScanning = useCallback(async (deviceId: string) => {
+    if (!videoRef.current || !readerRef.current || !isMountedRef.current) return
+
+    try {
+      await readerRef.current.decodeFromVideoDevice(
+        deviceId, 
+        videoRef.current, 
+        (result: Result | null, error?: Error) => {
+          if (!isMountedRef.current) return
+
+          if (result?.getText()) {
+            const detectedText = result.getText().toUpperCase().replace(/[^0-9A-Z]/g, '')
+
+            if (isValidVin(detectedText)) {
+              console.log('[VIN Scanner] VIN detected via barcode:', detectedText)
+              setScanResult(detectedText)
+              setScanStatus(`VIN detected: ${detectedText}`)
+              onVinDetected(detectedText)
+              setTimeout(stopScanning, 1000)
+              return
+            }
+          }
+
+          // Log solo errores relevantes
+          if (error && error.message && !error.message.includes('No code found')) {
+            console.warn('[VIN Scanner] Barcode scan error:', error.message)
+          }
+        }
+      )
+    } catch (error) {
+      console.error('[VIN Scanner] Barcode scanning error:', error)
+    }
+  }, [isValidVin, onVinDetected, stopScanning])
 
   const startScanning = useCallback(async (deviceId: string) => {
     if (!isMountedRef.current || !deviceId) return
@@ -100,7 +249,6 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     // Detener scanning anterior si existe
     if (isScanningActive) {
       stopScanning()
-      // Pequeña pausa para asegurar cleanup
       await new Promise(resolve => setTimeout(resolve, 100))
     }
 
@@ -110,51 +258,44 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
       setCameraError(null)
       setScanResult(null)
       setIsScanningActive(true)
+      setIsOcrProcessing(false)
+      setScanStatus('Starting camera...')
     }
 
     try {
       console.log(`[VIN Scanner] Starting camera with device: ${deviceId}`)
-      
-      await readerRef.current.decodeFromVideoDevice(
-        deviceId, 
-        videoRef.current, 
-        (result: Result | null, error?: Error) => {
-          if (!isMountedRef.current) return
 
-          if (result?.getText()) {
-            const vinText = result.getText().toUpperCase().replace(/[^0-9A-Z]/g, '')
-            console.log('[VIN Scanner] VIN detected:', vinText)
-            
-            if (isMountedRef.current) {
-              setScanResult(vinText)
-            }
-            
-            if (onVinDetected && typeof onVinDetected === 'function') {
-              onVinDetected(vinText)
-            }
-            
-            // Detener después de detección exitosa
-            setTimeout(stopScanning, 100)
-            return
-          }
-
-          // Log solo errores relevantes
-          if (error && error.message && !error.message.includes('No code found')) {
-            console.warn('[VIN Scanner] Scan error:', error.message)
-          }
-        }
-      )
+      // Iniciar cámara
+      await processBarcodeScanning(deviceId)
 
       console.log('[VIN Scanner] Camera started successfully')
       if (isMountedRef.current) {
         setIsCameraReady(true)
+        setScanStatus(scanMode === 'barcode' ? 'Scanning for barcodes...' : 
+                    scanMode === 'ocr' ? 'Ready for text recognition...' : 
+                    'Scanning for barcodes and text...')
       }
+
+      // Configurar scanning según el modo
+      if (scanMode === 'ocr') {
+        // Solo OCR
+        scanIntervalRef.current = setInterval(processOCR, 2000)
+      } else if (scanMode === 'auto') {
+        // Auto: Barcode primero, luego OCR después de 3 segundos
+        ocrTimeoutRef.current = setTimeout(() => {
+          if (isMountedRef.current && isScanningActive && !scanResult) {
+            setScanStatus('Switching to text recognition...')
+            scanIntervalRef.current = setInterval(processOCR, 2000)
+          }
+        }, 3000)
+      }
+      // Para 'barcode' mode, solo usa el callback del BrowserMultiFormatReader
 
     } catch (error: any) {
       console.error('[VIN Scanner] Failed to start camera:', error)
-      
+
       let errorMessage = 'Failed to start camera'
-      
+
       if (error?.name) {
         switch (error.name) {
           case 'NotAllowedError':
@@ -180,13 +321,14 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
         setCameraError(errorMessage)
         setIsCameraReady(false)
         setIsScanningActive(false)
+        setScanStatus('Camera error')
       }
-      
+
       if (onError && typeof onError === 'function') {
         onError(errorMessage)
       }
     }
-  }, [onVinDetected, onError, stopScanning, isScanningActive])
+  }, [onVinDetected, onError, stopScanning, isScanningActive, scanMode, processBarcodeScanning, processOCR, scanResult])
 
   // Inicialización y enumeración de dispositivos
   useEffect(() => {
@@ -197,12 +339,12 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
         }
 
         const videoDevices = await readerRef.current.listVideoInputDevices()
-        
+
         if (!isMountedRef.current) return
 
         if (videoDevices?.length > 0) {
           setDevices(videoDevices)
-          
+
           // Seleccionar cámara trasera por defecto o la primera disponible
           const backCamera = videoDevices.find(device => 
             device.label?.toLowerCase().includes('back') || 
@@ -213,6 +355,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
         } else {
           const errorMsg = 'No cameras found'
           setCameraError(errorMsg)
+          setScanStatus('No cameras available')
           if (onError && typeof onError === 'function') {
             onError(errorMsg)
           }
@@ -221,6 +364,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
         console.error('[VIN Scanner] Device enumeration failed:', error)
         if (isMountedRef.current) {
           setCameraError('Failed to access cameras')
+          setScanStatus('Camera access failed')
         }
         if (onError && typeof onError === 'function') {
           onError('Camera access failed')
@@ -237,12 +381,27 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     }
   }, [hints, cleanup, onError])
 
+  // Timeout de scanning
+  useEffect(() => {
+    if (isScanningActive) {
+      const timeout = setTimeout(() => {
+        if (isMountedRef.current && isScanningActive) {
+          stopScanning()
+          setScanStatus('Scan timeout - please try again')
+        }
+      }, 30000)
+
+      return () => clearTimeout(timeout)
+    }
+  }, [isScanningActive, stopScanning])
+
   // Handlers para botones
   const handleStartScan = useCallback(() => {
     if (selectedDeviceId && !isScanningActive) {
       startScanning(selectedDeviceId)
     } else if (!selectedDeviceId) {
       setCameraError('No camera selected')
+      setScanStatus('No camera selected')
     }
   }, [selectedDeviceId, isScanningActive, startScanning])
 
@@ -255,7 +414,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
   const handleDeviceChange = useCallback((deviceId: string) => {
     if (deviceId && deviceId !== selectedDeviceId) {
       setSelectedDeviceId(deviceId)
-      
+
       // Reiniciar con nuevo dispositivo si está escaneando
       if (isScanningActive) {
         setTimeout(() => startScanning(deviceId), 100)
@@ -263,8 +422,37 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     }
   }, [selectedDeviceId, isScanningActive, startScanning])
 
+  const handleModeChange = useCallback((mode: ScanMode) => {
+    setScanMode(mode)
+
+    // Reiniciar scanning si está activo
+    if (isScanningActive && selectedDeviceId) {
+      setTimeout(() => startScanning(selectedDeviceId), 100)
+    }
+  }, [isScanningActive, selectedDeviceId, startScanning])
+
   return (
-    <div className="flex flex-col h-full w-full min-h-[400px]">
+    <div className="flex flex-col h-full w-full min-h-[500px]">
+      {/* Mode Selection */}
+      <div className="p-3 bg-gray-50 dark:bg-gray-800 border-b">
+        <Tabs value={scanMode} onValueChange={handleModeChange} className="w-full">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="auto" className="flex items-center gap-1">
+              <Zap className="h-4 w-4" />
+              Auto
+            </TabsTrigger>
+            <TabsTrigger value="barcode" className="flex items-center gap-1">
+              <QrCode className="h-4 w-4" />
+              Barcode
+            </TabsTrigger>
+            <TabsTrigger value="ocr" className="flex items-center gap-1">
+              <Type className="h-4 w-4" />
+              Text
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+
       {/* Controls */}
       <div className="p-3 bg-gray-100 dark:bg-gray-800 border-b flex flex-wrap items-center justify-between gap-3">
         {devices.length > 1 && (
@@ -288,7 +476,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
             </Select>
           </div>
         )}
-        
+
         <div className="flex items-center gap-2">
           {!isScanningActive ? (
             <Button 
@@ -314,39 +502,54 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
 
       {/* Status */}
       <div className="px-3 py-2 bg-gray-50 dark:bg-gray-700 text-sm border-b">
-        {!isScanningActive && !cameraError && (
-          <span className="flex items-center text-blue-600">
-            <Video className="h-4 w-4 mr-1" />
-            Ready to scan
+        <div className="flex items-center justify-between">
+          <span className="flex items-center">
+            {!isScanningActive && !cameraError && (
+              <>
+                <Video className="h-4 w-4 mr-1 text-blue-600" />
+                <span className="text-blue-600">{scanStatus}</span>
+              </>
+            )}
+            {isScanningActive && !isCameraReady && !cameraError && (
+              <>
+                <Loader2 className="h-4 w-4 mr-1 animate-spin text-blue-600" />
+                <span className="text-blue-600 animate-pulse">{scanStatus}</span>
+              </>
+            )}
+            {isCameraReady && isScanningActive && !scanResult && (
+              <>
+                {isOcrProcessing ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin text-orange-600" />
+                ) : (
+                  <CheckCircle className="h-4 w-4 mr-1 text-green-600" />
+                )}
+                <span className={isOcrProcessing ? "text-orange-600" : "text-green-600"}>
+                  {scanStatus}
+                </span>
+              </>
+            )}
+            {scanResult && (
+              <>
+                <CheckCircle className="h-4 w-4 mr-1 text-green-600" />
+                <span className="text-green-600 font-medium">{scanStatus}</span>
+              </>
+            )}
+            {cameraError && (
+              <>
+                <AlertTriangle className="h-4 w-4 mr-1 text-red-600" />
+                <span className="text-red-600">{cameraError}</span>
+              </>
+            )}
           </span>
-        )}
-        {isScanningActive && !isCameraReady && !cameraError && (
-          <span className="flex items-center text-blue-600 animate-pulse">
-            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-            Starting camera...
+
+          {/* Mode indicator */}
+          <span className="text-xs text-gray-500 capitalize">
+            Mode: {scanMode}
           </span>
-        )}
-        {isCameraReady && isScanningActive && !scanResult && (
-          <span className="flex items-center text-green-600">
-            <CheckCircle className="h-4 w-4 mr-1" />
-            Scanning for VIN...
-          </span>
-        )}
-        {scanResult && (
-          <span className="flex items-center text-green-600 font-medium">
-            <CheckCircle className="h-4 w-4 mr-1" />
-            VIN detected: {scanResult}
-          </span>
-        )}
-        {cameraError && (
-          <span className="flex items-center text-red-600">
-            <AlertTriangle className="h-4 w-4 mr-1" />
-            {cameraError}
-          </span>
-        )}
+        </div>
       </div>
 
-      {/* Video */}
+      {/* Video with overlay */}
       <div className="relative flex-1 bg-black overflow-hidden">
         <video 
           ref={videoRef} 
@@ -355,7 +558,48 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
           muted 
           className="w-full h-full object-cover"
         />
-        
+
+        {/* Hidden canvas for OCR */}
+        <canvas 
+          ref={canvasRef} 
+          className="hidden"
+        />
+
+        {/* Scanning overlay */}
+        {isCameraReady && isScanningActive && (
+          <div className="absolute inset-0 pointer-events-none">
+            {/* Barcode scanning area (full screen) */}
+            {(scanMode === 'barcode' || scanMode === 'auto') && (
+              <div className="absolute inset-4 border-2 border-green-400 rounded-lg opacity-60">
+                <div className="absolute -top-6 left-0 bg-green-400 text-black px-2 py-1 rounded text-xs font-medium">
+                  Barcode/QR Scan Area
+                </div>
+              </div>
+            )}
+
+            {/* OCR scanning frame (center area) */}
+            {(scanMode === 'ocr' || (scanMode === 'auto' && isOcrProcessing)) && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div 
+                  className="border-2 border-orange-400 rounded-lg bg-transparent"
+                  style={{
+                    width: '80%',
+                    height: '40%',
+                    boxShadow: '0 0 0 9999px rgba(0,0,0,0.3)'
+                  }}
+                >
+                  <div className="absolute -top-6 left-0 bg-orange-400 text-black px-2 py-1 rounded text-xs font-medium">
+                    Text Recognition Area
+                  </div>
+                  <div className="absolute bottom-2 left-2 right-2 text-center text-white text-xs bg-black bg-opacity-50 rounded px-2 py-1">
+                    Align VIN text within this frame
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Overlay states */}
         {!isCameraReady && isScanningActive && !cameraError && (
           <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75">
@@ -365,7 +609,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
             </div>
           </div>
         )}
-        
+
         {cameraError && (
           <div className="absolute inset-0 flex items-center justify-center bg-red-900 bg-opacity-75">
             <div className="text-center text-white p-4">
@@ -375,12 +619,17 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
             </div>
           </div>
         )}
-        
+
         {!isScanningActive && !cameraError && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-800 bg-opacity-75">
             <div className="text-center text-white p-4">
               <Video className="h-12 w-12 mx-auto mb-2 opacity-50" />
               <p>Press Start to begin scanning</p>
+              <p className="text-sm opacity-75 mt-1">
+                {scanMode === 'auto' && 'Auto: Barcode first, then text recognition'}
+                {scanMode === 'barcode' && 'Barcode: QR codes and barcodes only'}
+                {scanMode === 'ocr' && 'Text: OCR text recognition only'}
+              </p>
             </div>
           </div>
         )}
