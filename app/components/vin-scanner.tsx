@@ -3,7 +3,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { BrowserMultiFormatReader, DecodeHintType, Result } from '@zxing/library'
 import { Alert, AlertDescription, AlertTitle } from '@/app/components/ui/alert'
-import { Loader2, CameraOff, Video, AlertTriangle, CheckCircle, XCircle } from 'lucide-react'
+import { Loader2, CameraOff, Video, AlertTriangle, CheckCircle, XCircle } from 'lucide-react' // <-- ¡CORRECCIÓN AQUÍ!
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select'
 import { Label } from '@/app/components/ui/label'
 
