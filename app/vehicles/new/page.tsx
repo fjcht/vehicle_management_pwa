@@ -1,4 +1,3 @@
-
 'use client'
 
 import { useState, useEffect, Suspense } from 'react'
@@ -43,42 +42,47 @@ interface VehicleData {
     name: string
     phone?: string
     email?: string
-  }
+  } | null
   assignedTo?: {
     id: string
     name: string
-  }
+  } | null
+}
+
+// Valores por defecto para el formulario
+const defaultFormData = {
+  vin: '',
+  licensePlate: '',
+  make: '',
+  model: '',
+  year: '',
+  color: '',
+  engineType: '',
+  transmission: '',
+  fuelType: '',
+  mileage: '',
+  clientId: '',
+  assignedToId: '',
+  parkingSpot: ''
+}
+
+const defaultNewClientData = {
+  name: '',
+  email: '',
+  phone: '',
+  address: ''
 }
 
 function NewVehiclePageContent() {
-  const [formData, setFormData] = useState({
-    vin: '',
-    licensePlate: '',
-    make: '',
-    model: '',
-    year: '',
-    color: '',
-    engineType: '',
-    transmission: '',
-    fuelType: '',
-    mileage: '',
-    clientId: '',
-    assignedToId: '',
-    parkingSpot: ''
-  })
-  const [clients, setClients] = useState<Client[]>([])
-  const [employees, setEmployees] = useState<Employee[]>([])
+  const [formData, setFormData] = useState(defaultFormData)
+  const [clients, setClients] = useState<Client[]>([]) // Inicializar como array vacío
+  const [employees, setEmployees] = useState<Employee[]>([]) // Inicializar como array vacío
   const [isLoading, setIsLoading] = useState(false)
   const [showNewClientForm, setShowNewClientForm] = useState(false)
   const [foundVehicleData, setFoundVehicleData] = useState<VehicleData | null>(null)
   const [dataSource, setDataSource] = useState<'database' | 'nhtsa' | null>(null)
   const [isDuplicateVin, setIsDuplicateVin] = useState(false)
-  const [newClientData, setNewClientData] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    address: ''
-  })
+  const [newClientData, setNewClientData] = useState(defaultNewClientData)
   const router = useRouter()
   const searchParams = useSearchParams()
   const { toast } = useToast()
@@ -87,10 +91,14 @@ function NewVehiclePageContent() {
     fetchClients()
     fetchEmployees()
     
-    // Pre-select client if provided in URL
-    const clientId = searchParams.get('clientId')
-    if (clientId) {
-      setFormData(prev => ({ ...prev, clientId }))
+    // Pre-select client if provided in URL - Manejo seguro de searchParams
+    try {
+      const clientId = searchParams?.get('clientId')
+      if (clientId) {
+        setFormData(prev => ({ ...prev, clientId }))
+      }
+    } catch (error) {
+      console.warn('Error reading search params:', error)
     }
   }, [searchParams])
 
@@ -99,10 +107,17 @@ function NewVehiclePageContent() {
       const response = await fetch('/api/clients')
       if (response.ok) {
         const data = await response.json()
-        setClients(data)
+        // Validar que data sea un array
+        if (Array.isArray(data)) {
+          setClients(data)
+        } else {
+          console.warn('Clients data is not an array:', data)
+          setClients([])
+        }
       }
     } catch (error) {
       console.error('Error fetching clients:', error)
+      setClients([]) // Asegurar que siempre sea un array
     }
   }
 
@@ -111,24 +126,33 @@ function NewVehiclePageContent() {
       const response = await fetch('/api/employees')
       if (response.ok) {
         const data = await response.json()
-        setEmployees(data)
+        // Validar que data sea un array
+        if (Array.isArray(data)) {
+          setEmployees(data)
+        } else {
+          console.warn('Employees data is not an array:', data)
+          setEmployees([])
+        }
       }
     } catch (error) {
       console.error('Error fetching employees:', error)
+      setEmployees([]) // Asegurar que siempre sea un array
     }
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target
     setFormData(prev => ({
       ...prev,
-      [e.target.name]: e.target.value
+      [name]: value || '' // Evitar undefined
     }))
   }
 
   const handleNewClientChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target
     setNewClientData(prev => ({
       ...prev,
-      [e.target.name]: e.target.value
+      [name]: value || '' // Evitar undefined
     }))
   }
 
@@ -140,7 +164,7 @@ function NewVehiclePageContent() {
     
     setFormData(prev => ({
       ...prev,
-      [name]: value
+      [name]: value || '' // Evitar undefined
     }))
   }
 
@@ -165,19 +189,22 @@ function NewVehiclePageContent() {
 
       if (response.ok) {
         const newClient = await response.json()
-        setClients(prev => [newClient, ...prev])
-        setFormData(prev => ({ ...prev, clientId: newClient.id }))
-        setShowNewClientForm(false)
-        setNewClientData({ name: '', email: '', phone: '', address: '' })
-        toast({
-          title: "Success",
-          description: "Client created successfully"
-        })
+        // Validar el nuevo cliente antes de agregarlo
+        if (newClient && newClient.id && newClient.name) {
+          setClients(prev => [newClient, ...prev])
+          setFormData(prev => ({ ...prev, clientId: newClient.id }))
+          setShowNewClientForm(false)
+          setNewClientData(defaultNewClientData)
+          toast({
+            title: "Success",
+            description: "Client created successfully"
+          })
+        }
       } else {
         const error = await response.json()
         toast({
           title: "Error",
-          description: error.error || "Failed to create client",
+          description: error?.error || "Failed to create client",
           variant: "destructive"
         })
       }
@@ -192,30 +219,36 @@ function NewVehiclePageContent() {
   }
 
   const handleVehicleDataFound = (data: VehicleData, source: 'database' | 'nhtsa') => {
+    // Validar que data no sea null/undefined antes de usarlo
+    if (!data) {
+      console.warn('Vehicle data is null or undefined')
+      return
+    }
+
     setFoundVehicleData(data)
     setDataSource(source)
     setIsDuplicateVin(source === 'database')
 
-    // Auto-fill form data
+    // Auto-fill form data con validaciones seguras
     setFormData(prev => ({
       ...prev,
-      vin: data.vin || prev.vin,
-      licensePlate: data.licensePlate || prev.licensePlate,
-      make: data.make || prev.make,
-      model: data.model || prev.model,
-      year: data.year ? data.year.toString() : prev.year,
-      color: data.color || prev.color,
-      engineType: data.engineType || prev.engineType,
-      transmission: data.transmission || prev.transmission,
-      fuelType: data.fuelType || prev.fuelType,
-      mileage: data.mileage ? data.mileage.toString() : prev.mileage,
-      parkingSpot: data.parkingSpot || prev.parkingSpot,
-      clientId: data.client?.id || prev.clientId,
-      assignedToId: data.assignedTo?.id || prev.assignedToId
+      vin: data.vin || prev.vin || '',
+      licensePlate: data.licensePlate || prev.licensePlate || '',
+      make: data.make || prev.make || '',
+      model: data.model || prev.model || '',
+      year: data.year ? String(data.year) : prev.year || '',
+      color: data.color || prev.color || '',
+      engineType: data.engineType || prev.engineType || '',
+      transmission: data.transmission || prev.transmission || '',
+      fuelType: data.fuelType || prev.fuelType || '',
+      mileage: data.mileage ? String(data.mileage) : prev.mileage || '',
+      parkingSpot: data.parkingSpot || prev.parkingSpot || '',
+      clientId: data.client?.id || prev.clientId || '',
+      assignedToId: data.assignedTo?.id || prev.assignedToId || ''
     }))
 
     // If vehicle found in database and has a client, add to clients list if not already there
-    if (source === 'database' && data.client) {
+    if (source === 'database' && data.client && data.client.id && data.client.name) {
       setClients(prev => {
         const exists = prev.find(c => c.id === data.client!.id)
         if (!exists) {
@@ -264,13 +297,12 @@ function NewVehiclePageContent() {
           title: "Success",
           description: "Vehicle created successfully"
         })
-        // Redirect to vehicles list instead of non-existent individual page
         router.push('/vehicles')
       } else {
         const error = await response.json()
         toast({
           title: "Error",
-          description: error.error || "Failed to create vehicle",
+          description: error?.error || "Failed to create vehicle",
           variant: "destructive"
         })
       }
@@ -372,14 +404,14 @@ function NewVehiclePageContent() {
                       id="vin"
                       name="vin"
                       placeholder="17-character VIN"
-                      value={formData.vin}
+                      value={formData.vin || ''}
                       onChange={handleChange}
                       className="font-mono uppercase"
                       maxLength={17}
                       readOnly={!!foundVehicleData}
                     />
                     <div className="text-xs text-gray-500">
-                      {formData.vin.length}/17 characters
+                      {(formData.vin || '').length}/17 characters
                       {foundVehicleData && (
                         <span className="ml-2 text-blue-600">
                           (Auto-filled from {dataSource === 'database' ? 'database' : 'NHTSA'})
@@ -393,14 +425,14 @@ function NewVehiclePageContent() {
                       id="licensePlate"
                       name="licensePlate"
                       placeholder="ABC-1234"
-                      value={formData.licensePlate}
+                      value={formData.licensePlate || ''}
                       onChange={handleChange}
                       required
                     />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="clientId">Owner (Optional)</Label>
-                    <Select value={formData.clientId} onValueChange={(value) => handleSelectChange('clientId', value)}>
+                    <Select value={formData.clientId || ''} onValueChange={(value) => handleSelectChange('clientId', value)}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select client (optional)" />
                       </SelectTrigger>
@@ -412,9 +444,9 @@ function NewVehiclePageContent() {
                             Add New Client
                           </div>
                         </SelectItem>
-                        {clients.map((client) => (
+                        {Array.isArray(clients) && clients.map((client) => (
                           <SelectItem key={client.id} value={client.id}>
-                            {client.name}
+                            {client.name || 'Unnamed Client'}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -437,7 +469,7 @@ function NewVehiclePageContent() {
                             id="newClientName"
                             name="name"
                             placeholder="Client name"
-                            value={newClientData.name}
+                            value={newClientData.name || ''}
                             onChange={handleNewClientChange}
                             required
                           />
@@ -448,7 +480,7 @@ function NewVehiclePageContent() {
                             id="newClientPhone"
                             name="phone"
                             placeholder="Phone number"
-                            value={newClientData.phone}
+                            value={newClientData.phone || ''}
                             onChange={handleNewClientChange}
                             required
                           />
@@ -462,7 +494,7 @@ function NewVehiclePageContent() {
                             name="email"
                             type="email"
                             placeholder="Email address"
-                            value={newClientData.email}
+                            value={newClientData.email || ''}
                             onChange={handleNewClientChange}
                           />
                         </div>
@@ -472,7 +504,7 @@ function NewVehiclePageContent() {
                             id="newClientAddress"
                             name="address"
                             placeholder="Address"
-                            value={newClientData.address}
+                            value={newClientData.address || ''}
                             onChange={handleNewClientChange}
                           />
                         </div>
@@ -497,7 +529,7 @@ function NewVehiclePageContent() {
                       id="make"
                       name="make"
                       placeholder="Toyota"
-                      value={formData.make}
+                      value={formData.make || ''}
                       onChange={handleChange}
                     />
                   </div>
@@ -507,7 +539,7 @@ function NewVehiclePageContent() {
                       id="model"
                       name="model"
                       placeholder="Camry"
-                      value={formData.model}
+                      value={formData.model || ''}
                       onChange={handleChange}
                     />
                   </div>
@@ -518,7 +550,7 @@ function NewVehiclePageContent() {
                       name="year"
                       type="number"
                       placeholder="2023"
-                      value={formData.year}
+                      value={formData.year || ''}
                       onChange={handleChange}
                       min="1900"
                       max={new Date().getFullYear() + 1}
@@ -535,7 +567,7 @@ function NewVehiclePageContent() {
                         id="color"
                         name="color"
                         placeholder="Red"
-                        value={formData.color}
+                        value={formData.color || ''}
                         onChange={handleChange}
                         className="pl-10"
                       />
@@ -550,7 +582,7 @@ function NewVehiclePageContent() {
                         name="mileage"
                         type="number"
                         placeholder="50000"
-                        value={formData.mileage}
+                        value={formData.mileage || ''}
                         onChange={handleChange}
                         className="pl-10"
                       />
@@ -566,7 +598,7 @@ function NewVehiclePageContent() {
                       id="engineType"
                       name="engineType"
                       placeholder="2.5L I4"
-                      value={formData.engineType}
+                      value={formData.engineType || ''}
                       onChange={handleChange}
                     />
                   </div>
@@ -576,7 +608,7 @@ function NewVehiclePageContent() {
                       id="transmission"
                       name="transmission"
                       placeholder="Automatic"
-                      value={formData.transmission}
+                      value={formData.transmission || ''}
                       onChange={handleChange}
                     />
                   </div>
@@ -586,7 +618,7 @@ function NewVehiclePageContent() {
                       id="fuelType"
                       name="fuelType"
                       placeholder="Gasoline"
-                      value={formData.fuelType}
+                      value={formData.fuelType || ''}
                       onChange={handleChange}
                     />
                   </div>
@@ -596,15 +628,15 @@ function NewVehiclePageContent() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="assignedToId">Assign to Employee</Label>
-                    <Select value={formData.assignedToId} onValueChange={(value) => handleSelectChange('assignedToId', value)}>
+                    <Select value={formData.assignedToId || ''} onValueChange={(value) => handleSelectChange('assignedToId', value)}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select employee (optional)" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">No assignment</SelectItem>
-                        {employees.map((employee) => (
+                        {Array.isArray(employees) && employees.map((employee) => (
                           <SelectItem key={employee.id} value={employee.id}>
-                            {employee.name}
+                            {employee.name || 'Unnamed Employee'}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -616,7 +648,7 @@ function NewVehiclePageContent() {
                       id="parkingSpot"
                       name="parkingSpot"
                       placeholder="A-15"
-                      value={formData.parkingSpot}
+                      value={formData.parkingSpot || ''}
                       onChange={handleChange}
                     />
                   </div>
