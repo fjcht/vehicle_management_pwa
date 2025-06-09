@@ -10,8 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Badge } from './ui/badge'
 import { Alert, AlertDescription } from './ui/alert'
 import { VinScanner } from './vin-scanner'
-import { useToast } from '@/hooks/use-toast'
-import { NHTSAVehicleData } from '@/lib/nhtsa'
+import { useToast } from '@/app/hooks/use-toast'
+import { NHTSAVehicleData } from '@/app/lib/nhtsa'
 
 interface VehicleData {
   id?: string
