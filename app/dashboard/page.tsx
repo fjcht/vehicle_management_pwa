@@ -1,224 +1,207 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import SmartVinInput from '@/app/components/smart-vin-input';
-import { Button } from '@/app/components/ui/button';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Input } from '@/app/components/ui/input';
+import { Button } from '@/app/components/ui/button';
 import { Label } from '@/app/components/ui/label';
+import { ScanBarcode, Camera, XCircle } from 'lucide-react';
+import { BrowserMultiFormatReader, DecodeHintType } from '@zxing/library';
 
-// Función simulada para decodificar el VIN
-// En un entorno real, esto sería una llamada a una API externa
-const decodeVin = (vin: string) => {
-  // Simulación de datos de decodificación
-  const decodedData: { [key: string]: { make: string; model: string; year: string; color: string } } = {
-    '1234567890ABCDEFGH': { make: 'Toyota', model: 'Camry', year: '2023', color: 'Negro' },
-    'ABCDEFGHIJKLMN1234': { make: 'Honda', model: 'Civic', year: '2022', color: 'Blanco' },
-    'XYZ1234567890ABCD': { make: 'Ford', model: 'F-150', year: '2024', color: 'Rojo' },
-    // Puedes añadir más VINs de ejemplo aquí
-  };
+// Definir las hints para ZXing
+const hints = new Map();
+const formats = [
+  // Barcodes
+  1, // AZTEC
+  2, // CODABAR
+  4, // CODE_39
+  8, // CODE_93
+  16, // CODE_128
+  32, // DATA_MATRIX
+  64, // EAN_8
+  128, // EAN_13
+  256, // ITF
+  512, // MAXICODE
+  1024, // PDF_417
+  2048, // RSS_14
+  4096, // RSS_EXPANDED
+  8192, // UPC_A
+  16384, // UPC_E
+  32768, // UPC_EAN_EXTENSION
+  // QR Codes
+  65536, // QR_CODE
+];
+hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
+hints.set(DecodeHintType.TRY_HARDER, true); // Intentar más para encontrar el código
 
-  return decodedData[vin.toUpperCase()] || null;
-};
+// CAMBIO: Cambiado a exportación por defecto
+export default function SmartVinInput({ value, onChange }: { value: string; onChange: (vin: string) => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const codeReader = useRef<BrowserMultiFormatReader | null>(null);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<string | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [stream, setStream] = useState<MediaStream | null>(null); // Para mantener una referencia al stream
 
-export default function DashboardPage() {
-  const [vin, setVin] = useState('');
-  const [make, setMake] = useState('');
-  const [model, setModel] = useState('');
-  const [year, setYear] = useState('');
-  const [color, setColor] = useState('');
-  const [licensePlate, setLicensePlate] = useState('');
-  const [mileage, setMileage] = useState('');
-  const [lastServiceDate, setLastServiceDate] = useState('');
-  const [nextServiceDate, setNextServiceDate] = useState('');
-  const [notes, setNotes] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false); // Para manejar el estado de envío
-
-  const handleVinChange = (newVin: string) => {
-    setVin(newVin);
-    // Lógica para decodificar el VIN y rellenar otros campos
-    const decodedInfo = decodeVin(newVin);
-    if (decodedInfo) {
-      setMake(decodedInfo.make);
-      setModel(decodedInfo.model);
-      setYear(decodedInfo.year);
-      setColor(decodedInfo.color);
-    } else {
-      // Si el VIN no se reconoce, puedes limpiar los campos o dejar que el usuario los rellene
-      // setMake('');
-      // setModel('');
-      // setYear('');
-      // setColor('');
+  // Función para obtener dispositivos de video
+  const getCameraDevices = useCallback(async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoInputDevices = devices.filter(device => device.kind === 'videoinput');
+      setVideoDevices(videoInputDevices);
+      if (videoInputDevices.length > 0 && !selectedDeviceId) {
+        setSelectedDeviceId(videoInputDevices[0].deviceId);
+      }
+    } catch (err) {
+      console.error("Error al enumerar dispositivos de cámara:", err);
+      setCameraError("No se pudieron listar las cámaras.");
     }
-  };
+  }, [selectedDeviceId]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true); // Deshabilita el botón mientras se envía
+  useEffect(() => {
+    getCameraDevices();
+  }, [getCameraDevices]);
 
-    const vehicleData = {
-      vin,
-      make,
-      model,
-      year,
-      color,
-      licensePlate,
-      mileage: parseFloat(mileage), // Convertir a número
-      lastServiceDate,
-      nextServiceDate,
-      notes,
-    };
+  // Función para iniciar el escaneo
+  const startScan = useCallback(async () => {
+    if (!selectedDeviceId) {
+      setCameraError("No se ha seleccionado ninguna cámara.");
+      return;
+    }
 
-    console.log('Intentando guardar vehículo:', vehicleData);
+    setIsScanning(true);
+    setScanResult(null);
+    setCameraError(null);
+
+    // Detener cualquier stream existente antes de iniciar uno nuevo
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      setStream(null);
+    }
+
+    if (!codeReader.current) {
+      codeReader.current = new BrowserMultiFormatReader(hints);
+    }
 
     try {
-      // Aquí harías una llamada a tu API para guardar los datos
-      // Ejemplo con fetch API:
-      const response = await fetch('/api/vehicles', { // Asume que tienes una API en /api/vehicles
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(vehicleData),
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        console.log('Vehículo guardado con éxito:', result);
-        alert('Vehículo guardado con éxito!');
-        // Opcional: Limpiar el formulario después de un envío exitoso
-        setVin('');
-        setMake('');
-        setModel('');
-        setYear('');
-        setColor('');
-        setLicensePlate('');
-        setMileage('');
-        setLastServiceDate('');
-        setNextServiceDate('');
-        setNotes('');
-      } else {
-        const errorData = await response.json();
-        console.error('Error al guardar vehículo:', errorData);
-        alert(`Error al guardar vehículo: ${errorData.message || response.statusText}`);
+      const videoElement = videoRef.current;
+      if (!videoElement) {
+        console.error("Elemento de video no disponible.");
+        setCameraError("Error: Elemento de video no disponible.");
+        setIsScanning(false);
+        return;
       }
-    } catch (error) {
-      console.error('Error de red o inesperado:', error);
-      alert('Ocurrió un error inesperado al guardar el vehículo.');
-    } finally {
-      setIsSubmitting(false); // Habilita el botón de nuevo
+
+      // Iniciar el escaneo con la cámara seleccionada
+      const newStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: selectedDeviceId } });
+      setStream(newStream); // Guardar referencia al stream
+      videoElement.srcObject = newStream;
+      await videoElement.play(); // Asegurarse de que el video se reproduzca
+
+      console.log('Cámara iniciada, intentando decodificar...');
+      codeReader.current.decodeFromStream(newStream, videoElement, (result, error) => {
+        if (result) {
+          console.log('VIN escaneado:', result.getText());
+          setScanResult(result.getText());
+          onChange(result.getText()); // Actualizar el valor del input
+          stopScan(); // Detener el escaneo automáticamente al encontrar un resultado
+        }
+        if (error && !(error instanceof Error && error.message.includes('No MultiFormat Readers were able to satisfy the decode request'))) {
+          // Ignorar errores de "no se encontró código" para evitar spam en la consola
+          console.error('Error de escaneo:', error);
+          // setCameraError(`Error de escaneo: ${error.message}`); // Descomentar para ver errores detallados
+        }
+      });
+    } catch (err) {
+      console.error("Error al acceder a la cámara:", err);
+      setCameraError(`Error al acceder a la cámara: ${err instanceof Error ? err.message : String(err)}`);
+      setIsScanning(false);
     }
-  };
+  }, [selectedDeviceId, onChange, stream]); // Añadir 'stream' a las dependencias
+
+  // Función para detener el escaneo
+  const stopScan = useCallback(() => {
+    if (codeReader.current) {
+      codeReader.current.reset();
+      console.log('Escaneo detenido.');
+    }
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      setStream(null);
+    }
+    setIsScanning(false);
+    setCameraError(null); // Limpiar errores al detener
+  }, [stream]);
+
+  // Efecto para detener el escaneo cuando el componente se desmonta o isScanning cambia a false
+  useEffect(() => {
+    return () => {
+      if (isScanning) {
+        stopScan();
+      }
+    };
+  }, [isScanning, stopScan]);
+
+  // Efecto para reiniciar el escaneo si cambia la cámara seleccionada mientras se está escaneando
+  useEffect(() => {
+    if (isScanning && selectedDeviceId) {
+      stopScan(); // Detener el escaneo actual
+      startScan(); // Iniciar con la nueva cámara
+    }
+  }, [selectedDeviceId, isScanning, startScan, stopScan]);
+
 
   return (
-    <div className="container mx-auto p-4">
-      <h3 className="text-2xl font-bold mb-6">Añadir Nuevo Vehículo</h3>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <Label htmlFor="vin">VIN</Label>
-          <SmartVinInput id="vin" value={vin} onChange={handleVinChange} />
-        </div>
-
-        <div>
-          <Label htmlFor="make">Marca</Label>
-          <Input
-            id="make"
-            type="text"
-            value={make}
-            onChange={(e) => setMake(e.target.value)}
-            placeholder="Ej: Toyota"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="model">Modelo</Label>
-          <Input
-            id="model"
-            type="text"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            placeholder="Ej: Camry"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="year">Año</Label>
-          <Input
-            id="year"
-            type="number"
-            value={year}
-            onChange={(e) => setYear(e.target.value)}
-            placeholder="Ej: 2023"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="color">Color</Label>
-          <Input
-            id="color"
-            type="text"
-            value={color}
-            onChange={(e) => setColor(e.target.value)}
-            placeholder="Ej: Negro"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="licensePlate">Matrícula</Label>
-          <Input
-            id="licensePlate"
-            type="text"
-            value={licensePlate}
-            onChange={(e) => setLicensePlate(e.target.value)}
-            placeholder="Ej: ABC-123"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="mileage">Kilometraje</Label>
-          <Input
-            id="mileage"
-            type="number"
-            value={mileage}
-            onChange={(e) => setMileage(e.target.value)}
-            placeholder="Ej: 50000"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="lastServiceDate">Fecha Último Servicio</Label>
-          <Input
-            id="lastServiceDate"
-            type="date"
-            value={lastServiceDate}
-            onChange={(e) => setLastServiceDate(e.target.value)}
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="nextServiceDate">Fecha Próximo Servicio</Label>
-          <Input
-            id="nextServiceDate"
-            type="date"
-            value={nextServiceDate}
-            onChange={(e) => setNextServiceDate(e.target.value)}
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="notes">Notas</Label>
-          <Input
-            id="notes"
-            type="textarea" // Nota: Input de shadcn/ui no tiene type="textarea", deberías usar un <Textarea> si lo tienes. Si no, esto será un input de texto normal.
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Añade cualquier nota relevante aquí..."
-          />
-        </div>
-
-        <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? 'Guardando...' : 'Guardar Vehículo'}
+    <div className="flex flex-col space-y-2">
+      <Label htmlFor="vin-input">VIN</Label>
+      <div className="flex space-x-2">
+        <Input
+          id="vin-input"
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Introduce o escanea el VIN"
+          className="flex-grow"
+          disabled={isScanning}
+        />
+        <Button type="button" onClick={isScanning ? stopScan : startScan} disabled={!selectedDeviceId && !isScanning}>
+          {isScanning ? <XCircle className="h-4 w-4 mr-2" /> : <ScanBarcode className="h-4 w-4 mr-2" />}
+          {isScanning ? 'Detener Escaneo' : 'Escanear VIN'}
         </Button>
-      </form>
+      </div>
+
+      {isScanning && (
+        <div className="relative w-full h-64 bg-gray-200 flex items-center justify-center rounded-md overflow-hidden">
+          <video ref={videoRef} className="w-full h-full object-cover" playsInline muted></video>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-3/4 h-1/4 border-2 border-red-500 opacity-75 animate-pulse"></div>
+          </div>
+          {cameraError && <p className="absolute text-red-500 bg-white p-2 rounded-md">{cameraError}</p>}
+        </div>
+      )}
+
+      {videoDevices.length > 1 && isScanning && (
+        <div className="flex items-center space-x-2">
+          <Label htmlFor="camera-select">Seleccionar Cámara:</Label>
+          <select
+            id="camera-select"
+            className="p-2 border rounded-md"
+            onChange={(e) => setSelectedDeviceId(e.target.value)}
+            value={selectedDeviceId || ''}
+          >
+            {videoDevices.map((device) => (
+              <option key={device.deviceId} value={device.deviceId}>
+                {device.label || `Cámara ${device.deviceId}`}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {scanResult && isScanning && (
+        <p className="text-green-600 font-semibold">VIN Escaneado: {scanResult}</p>
+      )}
     </div>
   );
 }
