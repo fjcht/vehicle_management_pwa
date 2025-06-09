@@ -3,17 +3,19 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import { ThemeProvider } from '@/app/components/theme-provider'
 import { Toaster } from '@/app/components/ui/toaster'
-import { SessionProvider } from 'next-auth/react' // Importar SessionProvider
+// Eliminado: import { SessionProvider } from 'next-auth/react' // ¡ELIMINADO!
 // Eliminado: import { auth } from 'next-auth' // ¡ELIMINADO!
+
+import { AuthProvider } from '@/app/components/auth-provider'; // ¡IMPORTA TU NUEVO CLIENT COMPONENT!
 
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: 'VIN Scanner PWA',
   description: 'Progressive Web App for VIN scanning and decoding',
-  manifest: '/manifest.json', // Asegúrate de que tu manifest.json esté en la carpeta public
+  manifest: '/manifest.json',
   icons: {
-    apple: '/icon-192x192.png', // Asegúrate de que tus iconos estén en la carpeta public
+    apple: '/icon-192x192.png',
   },
   themeColor: '#0000',
 }
@@ -34,11 +36,10 @@ export default async function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          {/* Envuelve tu aplicación con SessionProvider */}
-          {/* SessionProvider no necesita la prop 'session' aquí si no la obtienes en el layout */}
-          <SessionProvider> 
+          {/* Envuelve tu aplicación con tu AuthProvider */}
+          <AuthProvider> {/* ¡USA TU NUEVO AUTHPROVIDER AQUÍ! */}
             {children}
-          </SessionProvider>
+          </AuthProvider>
           <Toaster />
         </ThemeProvider>
       </body>
