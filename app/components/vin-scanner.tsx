@@ -291,9 +291,6 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
     setCameraError(null)
 
     // Detener la cámara solo si ya está escaneando para evitar interrupciones innecesarias
-    // Si isScanning es false, significa que no hay una cámara activa que detener.
-    // Eliminamos el `await new Promise` aquí, ya que el `useEffect` de ZXing
-    // se encargará de la inicialización del video una vez que `isScanning` sea true.
     if (isScanning) {
       stopCamera();
     }
@@ -358,7 +355,7 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
       });
       stopCamera(); // Asegurarse de detener la cámara si falla el inicio
     }
-  }, [toast, permissionStatus, getCameraConstraints, addDebugInfo, stopCamera, isScanning]); // Añadido isScanning a las dependencias de startCamera
+  }, [toast, permissionStatus, getCameraConstraints, addDebugInfo, stopCamera, isScanning]);
 
   const decodeVin = useCallback(async () => {
     if (!manualVin) {
@@ -473,9 +470,8 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
         setZxingStatus('Scanning for codes...');
         // Asegurarse de que el lector no esté ya decodificando del mismo dispositivo
         // Esto es para evitar múltiples llamadas a decodeFromVideoDevice
-          // @ts-ignore - is, isDecoding, isScanning son propiedades internas de ZXing
-          if (!codeReader.isDecoding && !codeReader.isScanning) {
-          codeReader.decodeFromVideoDevice(
+        // @ts-ignore
+        if (!codeReader.isDecoding && !codeReader.isScanning) {
           codeReader.decodeFromVideoDevice(
             selectedCameraId || undefined,
             videoElement,
@@ -496,12 +492,13 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
                   setZxingStatus(`Code found, but not a valid VIN: ${detectedCode.substring(0, 20)}...`);
                 }
               }
+              // Solo loguear errores de ZXing que no sean "No MultiFormat Readers" (que es normal si no hay código)
               if (error && !error.message.includes('No MultiFormat Readers')) {
-                // addDebugInfo(`ZXing Error: ${error}`); // Descomentar para depurar errores de escaneo
+                addDebugInfo(`ZXing Error: ${error}`); // Descomentar para depurar errores de escaneo
                 setZxingStatus('Scanning...'); // Mantener el estado de escaneo si no es un error crítico
               }
             }
-          );
+          ); // <-- Este es el cierre de decodeFromVideoDevice
         } else {
           addDebugInfo('ZXing reader already decoding or scanning. Skipping redundant call.');
         }
