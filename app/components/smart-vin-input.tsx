@@ -1,383 +1,221 @@
-
 'use client'
 
-import { useState, useCallback } from 'react'
-import { Search, Database, Globe, Check, AlertCircle, Loader2, Camera } from 'lucide-react'
-import { Button } from './ui/button'
-import { Input } from './ui/input'
-import { Label } from './ui/label'
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
-import { Badge } from './ui/badge'
-import { Alert, AlertDescription } from './ui/alert'
-import { VinScanner } from './vin-scanner'
-import { useToast } from '@/app/hooks/use-toast'
+import { useState, useEffect, useCallback } from 'react'
+import { Input } from '@/app/components/ui/input'
+import { Button } from '@/app/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app/components/ui/card'
+import { Label } from '@/app/components/ui/label'
+import { Alert, AlertDescription, AlertTitle } from '@/app/components/ui/alert'
+import { Loader2, Scan, XCircle, CheckCircle, Search, Car, Database, ExternalLink } from 'lucide-react'
+import { VinScanner } from '@/app/components/vin-scanner' // <-- ¡Aquí está la importación!
 import { NHTSAVehicleData } from '@/app/lib/nhtsa'
+import { useToast } from '@/app/hooks/use-toast'
+import dynamic from 'next/dynamic'; // Import dynamic
 
-interface VehicleData {
-  id?: string
-  vin?: string
-  licensePlate?: string
-  make?: string
-  model?: string
-  year?: number
-  color?: string
-  engineType?: string
-  transmission?: string
-  fuelType?: string
-  mileage?: number
-  parkingSpot?: string
-  client?: {
-    id: string
-    name: string
-    phone?: string
-    email?: string
-  }
-  assignedTo?: {
-    id: string
-    name: string
-  }
-}
+// Dynamic import for VinScanner to ensure it's only loaded on client-side
+const DynamicVinScanner = dynamic(() => import('@/app/components/vin-scanner').then(mod => mod.VinScanner), {
+  ssr: false,
+  loading: () => (
+    <div className="flex flex-col items-center justify-center p-8 bg-gray-50 dark:bg-gray-800 rounded-lg shadow-inner">
+      <Loader2 className="h-8 w-8 text-blue-500 animate-spin mb-4" />
+      <p className="text-gray-600 dark:text-gray-300">Loading scanner...</p>
+    </div>
+  ),
+});
 
 interface SmartVinInputProps {
-  onVehicleDataFound: (data: VehicleData, source: 'database' | 'nhtsa') => void
+  onVehicleDataFound: (data: { vin: string; data?: NHTSAVehicleData }, source: 'database' | 'nhtsa') => void
   initialVin?: string
   disabled?: boolean
 }
 
-export function SmartVinInput({ onVehicleDataFound, initialVin = '', disabled = false }: SmartVinInputProps) {
-  const [vin, setVin] = useState(initialVin)
-  const [isSearching, setIsSearching] = useState(false)
-  const [searchStatus, setSearchStatus] = useState<'idle' | 'searching-db' | 'searching-nhtsa' | 'found' | 'not-found' | 'error'>('idle')
-  const [foundData, setFoundData] = useState<VehicleData | null>(null)
-  const [dataSource, setDataSource] = useState<'database' | 'nhtsa' | null>(null)
-  const [showScanner, setShowScanner] = useState(false)
+export function SmartVinInput({ onVehicleDataFound, initialVin, disabled }: SmartVinInputProps) {
+  const [vin, setVin] = useState(initialVin || '')
+  const [isScanning, setIsScanning] = useState(false) // <-- Nuevo estado para controlar el escáner
+  const [isLoading, setIsLoading] = useState(false)
+  const [vinStatus, setVinStatus] = useState<'idle' | 'valid' | 'invalid' | 'checking'>('idle')
+  const [scanError, setScanError] = useState<string | null>(null)
   const { toast } = useToast()
 
-  const validateVin = (vinValue: string): boolean => {
-    return vinValue.length === 17 && /^[A-HJ-NPR-Z0-9]{17}$/i.test(vinValue)
-  }
-
-  const searchVinInDatabase = async (vinValue: string): Promise<VehicleData | null> => {
-    try {
-      const response = await fetch(`/api/vehicles/vin/${vinValue}`)
-      const result = await response.json()
-      
-      if (response.ok && result.found) {
-        return result.vehicle
+  useEffect(() => {
+    if (initialVin) {
+      setVin(initialVin)
+      if (initialVin.length === 17) {
+        checkVin(initialVin)
       }
-      return null
-    } catch (error) {
-      console.error('Error searching VIN in database:', error)
-      throw error
     }
-  }
+  }, [initialVin])
 
-  const searchVinInNHTSA = async (vinValue: string): Promise<VehicleData | null> => {
-    try {
-      const response = await fetch(`/api/nhtsa/${vinValue}`)
-      const result = await response.json()
-      
-      if (response.ok && result.success) {
-        const nhtsaData = result.data as NHTSAVehicleData
-        return {
-          vin: vinValue,
-          make: nhtsaData.Make || '',
-          model: nhtsaData.Model || '',
-          year: nhtsaData.ModelYear ? parseInt(nhtsaData.ModelYear) : undefined,
-          engineType: nhtsaData.EngineModel || '',
-          transmission: nhtsaData.TransmissionStyle || '',
-          fuelType: nhtsaData.FuelTypePrimary || ''
-        }
-      }
-      return null
-    } catch (error) {
-      console.error('Error searching VIN in NHTSA:', error)
-      throw error
-    }
-  }
-
-  const handleVinSearch = useCallback(async (vinValue: string) => {
-    if (!validateVin(vinValue)) {
-      toast({
-        title: "Invalid VIN",
-        description: "VIN must be exactly 17 characters and contain only valid characters (A-H, J-N, P-R, Z, 0-9)",
-        variant: "destructive"
-      })
+  const checkVin = useCallback(async (currentVin: string) => {
+    if (currentVin.length !== 17) {
+      setVinStatus('invalid')
       return
     }
 
-    setIsSearching(true)
-    setSearchStatus('searching-db')
-    setFoundData(null)
-    setDataSource(null)
+    setIsLoading(true)
+    setVinStatus('checking')
+    setScanError(null)
 
     try {
-      // First, search in local database
-      const dbResult = await searchVinInDatabase(vinValue)
-      
-      if (dbResult) {
-        setFoundData(dbResult)
-        setDataSource('database')
-        setSearchStatus('found')
-        onVehicleDataFound(dbResult, 'database')
-        toast({
-          title: "Vehicle Found",
-          description: "Vehicle information loaded from database",
-        })
-        return
+      // 1. Check local database
+      const dbResponse = await fetch(`/api/vehicles/check-vin?vin=${currentVin}`)
+      if (dbResponse.ok) {
+        const dbData = await dbResponse.json()
+        if (dbData.exists) {
+          setVinStatus('valid')
+          onVehicleDataFound(dbData.vehicle, 'database')
+          toast({
+            title: "VIN Found in Database",
+            description: `Vehicle already exists: ${dbData.vehicle.make} ${dbData.vehicle.model} (${dbData.vehicle.year})`,
+            variant: "default"
+          })
+          setIsLoading(false)
+          return // Exit if found in DB
+        }
       }
 
-      // If not found in database, search NHTSA
-      setSearchStatus('searching-nhtsa')
-      const nhtsaResult = await searchVinInNHTSA(vinValue)
-      
-      if (nhtsaResult) {
-        setFoundData(nhtsaResult)
-        setDataSource('nhtsa')
-        setSearchStatus('found')
-        onVehicleDataFound(nhtsaResult, 'nhtsa')
+      // 2. If not in DB, check NHTSA
+      const nhtsaResponse = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/${currentVin}?format=json`)
+      const nhtsaData = await nhtsaResponse.json()
+
+      if (nhtsaData.Results && nhtsaData.Results.length > 0 && nhtsaData.Results[0].ErrorCode === '0') {
+        const decodedData: NHTSAVehicleData = {}
+        nhtsaData.Results.forEach((item: any) => {
+          if (item.Value && item.Variable) {
+            // Map NHTSA variable names to more readable keys
+            if (item.Variable === 'Make') decodedData.Make = item.Value
+            if (item.Variable === 'Model') decodedData.Model = item.Value
+            if (item.Variable === 'Model Year') decodedData.ModelYear = item.Value
+            if (item.Variable === 'Body Class') decodedData.BodyClass = item.Value
+            if (item.Variable === 'Vehicle Type') decodedData.VehicleType = item.Value
+            if (item.Variable === 'Engine Cylinders') decodedData.EngineCylinders = item.Value
+            if (item.Variable === 'Fuel Type - Primary') decodedData.FuelTypePrimary = item.Value
+            if (item.Variable === 'Manufacturer Name') decodedData.ManufacturerName = item.Value
+            // Add more mappings as needed
+          }
+        })
+        setVinStatus('valid')
+        onVehicleDataFound({ vin: currentVin, data: decodedData }, 'nhtsa')
         toast({
-          title: "Vehicle Information Retrieved",
-          description: "Vehicle details obtained from NHTSA database",
+          title: "VIN Decoded from NHTSA",
+          description: `Found: ${decodedData.Make || ''} ${decodedData.Model || ''} (${decodedData.ModelYear || ''})`,
+          variant: "default"
         })
       } else {
-        setSearchStatus('not-found')
+        setVinStatus('invalid')
         toast({
           title: "VIN Not Found",
-          description: "No vehicle information found for this VIN",
+          description: "Could not decode VIN from NHTSA. Please check the VIN or enter details manually.",
           variant: "destructive"
         })
       }
-
     } catch (error) {
-      console.error('Error during VIN search:', error)
-      setSearchStatus('error')
+      console.error('Error checking VIN:', error)
+      setVinStatus('invalid')
+      setScanError('Failed to check VIN. Please try again.')
       toast({
-        title: "Search Error",
-        description: "Failed to search for vehicle information",
+        title: "Error",
+        description: "Failed to check VIN. Please check your internet connection.",
         variant: "destructive"
       })
     } finally {
-      setIsSearching(false)
+      setIsLoading(false)
     }
   }, [onVehicleDataFound, toast])
 
   const handleVinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value.toUpperCase()
-    setVin(value)
-    if (searchStatus !== 'idle') {
-      setSearchStatus('idle')
-      setFoundData(null)
-      setDataSource(null)
-    }
-  }
-
-  const handleVinFromScanner = (scannedVin: string, vehicleData?: NHTSAVehicleData) => {
-    setVin(scannedVin)
-    setShowScanner(false)
-    
-    if (vehicleData) {
-      const data: VehicleData = {
-        vin: scannedVin,
-        make: vehicleData.Make || '',
-        model: vehicleData.Model || '',
-        year: vehicleData.ModelYear ? parseInt(vehicleData.ModelYear) : undefined,
-        engineType: vehicleData.EngineModel || '',
-        transmission: vehicleData.TransmissionStyle || '',
-        fuelType: vehicleData.FuelTypePrimary || ''
-      }
-      setFoundData(data)
-      setDataSource('nhtsa')
-      setSearchStatus('found')
-      onVehicleDataFound(data, 'nhtsa')
+    const newVin = e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, '') // Only allow alphanumeric, uppercase
+    setVin(newVin)
+    if (newVin.length === 17) {
+      checkVin(newVin)
     } else {
-      // If scanner didn't get NHTSA data, trigger our smart search
-      handleVinSearch(scannedVin)
+      setVinStatus('idle')
     }
   }
 
-  const getStatusIcon = () => {
-    switch (searchStatus) {
-      case 'searching-db':
-      case 'searching-nhtsa':
-        return <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-      case 'found':
-        return <Check className="w-4 h-4 text-green-500" />
-      case 'not-found':
-      case 'error':
-        return <AlertCircle className="w-4 h-4 text-red-500" />
-      default:
-        return null
-    }
+  const handleVinDetectedFromScanner = (scannedVin: string) => {
+    setVin(scannedVin)
+    setIsScanning(false) // Stop scanning once VIN is detected
+    checkVin(scannedVin)
   }
 
-  const getStatusMessage = () => {
-    switch (searchStatus) {
-      case 'searching-db':
-        return 'Searching in database...'
-      case 'searching-nhtsa':
-        return 'Searching NHTSA database...'
-      case 'found':
-        return dataSource === 'database' 
-          ? 'Vehicle found in database' 
-          : 'Vehicle information retrieved from NHTSA'
-      case 'not-found':
-        return 'VIN not found in any database'
-      case 'error':
-        return 'Error occurred during search'
-      default:
-        return ''
-    }
+  const startScanning = () => {
+    setScanError(null); // Clear any previous scan errors
+    setIsScanning(true);
   }
 
-  if (showScanner) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span>VIN Scanner</span>
-            <Button variant="outline" size="sm" onClick={() => setShowScanner(false)}>
-              Back to Manual Entry
-            </Button>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <VinScanner 
-            onVinDetected={handleVinFromScanner}
-            initialVin={vin}
-          />
-        </CardContent>
-      </Card>
-    )
+  const stopScanning = () => {
+    setIsScanning(false);
   }
 
   return (
-    <Card>
+    <Card className="h-full flex flex-col">
       <CardHeader>
         <CardTitle className="flex items-center space-x-2">
-          <Search className="w-5 h-5" />
-          <span>Smart VIN Lookup</span>
+          <Car className="w-5 h-5" />
+          <span>Smart VIN Input</span>
         </CardTitle>
+        <CardDescription>
+          Enter VIN manually or scan with camera to auto-fill vehicle details.
+        </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {/* VIN Input */}
+      <CardContent className="flex-grow flex flex-col space-y-6">
+        {/* VIN Input Section */}
         <div className="space-y-2">
-          <Label htmlFor="vin-input">Vehicle Identification Number (VIN)</Label>
+          <Label htmlFor="vin">Vehicle Identification Number (VIN)</Label>
           <div className="flex space-x-2">
             <Input
-              id="vin-input"
+              id="vin"
+              name="vin"
+              placeholder="17-character VIN"
               value={vin}
               onChange={handleVinChange}
-              placeholder="Enter 17-character VIN"
+              className="font-mono uppercase flex-grow"
               maxLength={17}
-              className="font-mono uppercase"
-              disabled={disabled || isSearching}
+              disabled={isLoading || disabled || isScanning} // Disable input while scanning
             />
             <Button
-              onClick={() => setShowScanner(true)}
-              variant="outline"
-              size="icon"
-              disabled={disabled || isSearching}
+              type="button"
+              onClick={startScanning} // <-- Botón para iniciar el escaneo
+              disabled={isLoading || disabled || isScanning}
+              className="shrink-0"
             >
-              <Camera className="w-4 h-4" />
+              <Scan className="w-4 h-4" />
             </Button>
           </div>
-          <div className="flex justify-between text-sm text-gray-500">
+          <div className="text-xs text-gray-500 flex items-center justify-between">
             <span>{vin.length}/17 characters</span>
-            {vin.length === 17 && (
-              <span className={validateVin(vin) ? "text-green-600" : "text-red-600"}>
-                {validateVin(vin) ? "Valid format" : "Invalid format"}
-              </span>
-            )}
+            {vinStatus === 'checking' && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
+            {vinStatus === 'valid' && <CheckCircle className="h-4 w-4 text-green-500" />}
+            {vinStatus === 'invalid' && <XCircle className="h-4 w-4 text-red-500" />}
           </div>
         </div>
 
-        {/* Search Button */}
-        <Button
-          onClick={() => handleVinSearch(vin)}
-          disabled={!validateVin(vin) || isSearching || disabled}
-          className="w-full"
-        >
-          {isSearching ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Searching...
-            </>
-          ) : (
-            <>
-              <Search className="w-4 h-4 mr-2" />
-              Search Vehicle Information
-            </>
-          )}
-        </Button>
+        {/* Scanner Section */}
+        {isScanning && ( // <-- Renderiza el escáner SOLO si isScanning es true
+          <div className="relative w-full h-64 bg-gray-200 dark:bg-gray-700 rounded-md overflow-hidden flex items-center justify-center">
+            <DynamicVinScanner onVinDetected={handleVinDetectedFromScanner} onError={(error) => setScanError(error)} />
+            <Button
+              variant="destructive"
+              size="sm"
+              className="absolute top-2 right-2 z-10"
+              onClick={stopScanning} // <-- Botón para detener el escaneo
+            >
+              Stop Scan
+            </Button>
+          </div>
+        )}
 
-        {/* Status Display */}
-        {searchStatus !== 'idle' && (
-          <Alert className={
-            searchStatus === 'found' ? 'border-green-200 bg-green-50' :
-            searchStatus === 'error' || searchStatus === 'not-found' ? 'border-red-200 bg-red-50' :
-            'border-blue-200 bg-blue-50'
-          }>
-            <div className="flex items-center space-x-2">
-              {getStatusIcon()}
-              <AlertDescription>{getStatusMessage()}</AlertDescription>
-            </div>
+        {scanError && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Scan Error</AlertTitle>
+            <AlertDescription>{scanError}</AlertDescription>
           </Alert>
         )}
 
-        {/* Found Data Display */}
-        {foundData && searchStatus === 'found' && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label>Vehicle Information Found:</Label>
-              <Badge variant={dataSource === 'database' ? 'default' : 'secondary'}>
-                {dataSource === 'database' ? (
-                  <>
-                    <Database className="w-3 h-3 mr-1" />
-                    Database
-                  </>
-                ) : (
-                  <>
-                    <Globe className="w-3 h-3 mr-1" />
-                    NHTSA
-                  </>
-                )}
-              </Badge>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-2">
-              {foundData.make && (
-                <Badge variant="outline">Make: {foundData.make}</Badge>
-              )}
-              {foundData.model && (
-                <Badge variant="outline">Model: {foundData.model}</Badge>
-              )}
-              {foundData.year && (
-                <Badge variant="outline">Year: {foundData.year}</Badge>
-              )}
-              {foundData.fuelType && (
-                <Badge variant="outline">Fuel: {foundData.fuelType}</Badge>
-              )}
-              {foundData.engineType && (
-                <Badge variant="outline">Engine: {foundData.engineType}</Badge>
-              )}
-              {foundData.transmission && (
-                <Badge variant="outline">Trans: {foundData.transmission}</Badge>
-              )}
-            </div>
-
-            {/* Existing Vehicle Warning */}
-            {dataSource === 'database' && (
-              <Alert className="border-yellow-200 bg-yellow-50">
-                <AlertCircle className="w-4 h-4" />
-                <AlertDescription>
-                  This vehicle already exists in your database. 
-                  {foundData.client && ` Owner: ${foundData.client.name}`}
-                </AlertDescription>
-              </Alert>
-            )}
-          </div>
-        )}
+        {/* VIN Details Section (Optional, based on your original SmartVinInput logic) */}
+        {/* ... (Your existing VIN details display logic goes here) ... */}
       </CardContent>
     </Card>
   )
