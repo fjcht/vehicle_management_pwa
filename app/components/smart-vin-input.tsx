@@ -3,9 +3,9 @@
 
 import { useState, useEffect } from 'react';
 import SmartVinInput from '@/app/components/smart-vin-input'; // Asegúrate de la ruta correcta
-import { Button } from '@/components/ui/button'; // Si usas shadcn/ui
-import { Input } from '@/components/ui/input'; // Si usas shadcn/ui
-import { Label } from '@/components/ui/label'; // Si usas shadcn/ui
+import { Button } from '@/app/components/ui/button'; // Si usas shadcn/ui
+import { Input } from '@/app/components/ui/input'; // Si usas shadcn/ui
+import { Label } from '@/app/components/ui/label'; // Si usas shadcn/ui
 
 export default function DashboardPage() {
   // 1. Estados para los campos del formulario del vehículo
