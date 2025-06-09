@@ -42,12 +42,13 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
   const [debugInfo, setDebugInfo] = useState<string[]>([])
   const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([])
   const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null)
-  const [activeCameraId, setActiveCameraId] = useState<string | null>(null); // Nuevo estado para la cámara activa
+  const [activeCameraId, setActiveCameraId] = useState<string | null>(null);
+  const [hasInitialCameraStarted, setHasInitialCameraStarted] = useState(false); // Nuevo estado para controlar el inicio inicial
 
   // Nuevos estados para ZXing
   const [isZxingReady, setIsZxingReady] = useState(false);
   const [zxingStatus, setZxingStatus] = useState<string>('Idle');
-  const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null); // Referencia al lector de códigos
+  const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -124,7 +125,7 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
 
   const checkCameraPermissions = useCallback(async () => {
     setIsCheckingPermissions(true)
-    setCameraError(null); // Limpiar errores anteriores
+    setCameraError(null);
     addDebugInfo('=== CHECKING CAMERA PERMISSIONS ===')
 
     try {
@@ -151,7 +152,6 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
         setPermissionStatus('unknown');
       }
 
-      // Attempt to get a stream to confirm actual access
       try {
         const testStream = await navigator.mediaDevices.getUserMedia({ video: true });
         addDebugInfo(`✔ Camera access test successful`);
@@ -162,10 +162,10 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
         if (testError.name === 'NotAllowedError') {
           setPermissionStatus('denied');
         } else if (testError.name === 'NotFoundError') {
-          setPermissionStatus('denied'); // No camera found
+          setPermissionStatus('denied');
           setCameraError({ name: 'NoCameraFound', message: 'No camera found on this device.' });
         } else if (testError.name === 'NotReadableError') {
-          setPermissionStatus('denied'); // Camera in use
+          setPermissionStatus('denied');
           setCameraError({ name: 'CameraInUse', message: 'Camera is already in use by another application.' });
         } else {
           setPermissionStatus('unknown');
@@ -188,7 +188,6 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
   const enumerateCameras = useCallback(async () => {
     addDebugInfo('Enumerating media devices...');
     try {
-      // Request a temporary stream to ensure labels are available
       let tempStream: MediaStream | null = null;
       if (permissionStatus === 'granted') {
         try {
@@ -245,7 +244,6 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
       (constraints.video as MediaTrackConstraints).deviceId = { exact: selectedCameraId };
       addDebugInfo(`Using specific camera ID: ${selectedCameraId}`);
     } else {
-      // Fallback if no specific ID, try environment facing mode
       (constraints.video as MediaTrackConstraints).facingMode = 'environment';
       addDebugInfo(`No specific camera ID, trying 'environment' facingMode.`);
     }
@@ -267,7 +265,7 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
   const stopCamera = useCallback(() => {
     addDebugInfo('Stopping camera...')
     if (codeReaderRef.current) {
-      codeReaderRef.current.reset(); // Detener el lector de ZXing
+      codeReaderRef.current.reset();
       addDebugInfo('ZXing reader reset.');
     }
     if (streamRef.current) {
@@ -280,13 +278,10 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
     if (videoRef.current) {
       videoRef.current.srcObject = null
       videoRef.current.pause();
-      // No llamar a videoRef.current.load() aquí para evitar interrupciones
-      // El AbortError ocurre cuando un nuevo load request interrumpe un play request.
-      // La asignación de srcObject = null ya es suficiente para detener el stream.
     }
     setIsScanning(false)
     setZxingStatus('Idle');
-    setActiveCameraId(null); // Resetear la cámara activa
+    setActiveCameraId(null);
     addDebugInfo('Camera stopped')
   }, [addDebugInfo])
 
@@ -294,16 +289,17 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
     addDebugInfo('=== STARTING CAMERA PROCESS ===')
     setCameraError(null)
 
-    // Detener la cámara solo si ya está escaneando para evitar interrupciones innecesarias
-    // y si la cámara activa es diferente a la seleccionada
-    if (isScanning && activeCameraId !== selectedCameraId) {
-      addDebugInfo('Camera already scanning with a different ID or needs restart. Stopping current stream.');
-      stopCamera();
-    } else if (isScanning && activeCameraId === selectedCameraId) {
+    // Si ya estamos escaneando con la cámara seleccionada, no hacer nada
+    if (isScanning && activeCameraId === selectedCameraId) {
       addDebugInfo('Camera already scanning with the same ID. Skipping restart.');
-      return; // No hacer nada si ya está escaneando con la misma cámara
+      return;
     }
 
+    // Si estamos escaneando con una cámara diferente, o si no estamos escaneando, detener la actual
+    if (isScanning) {
+      addDebugInfo('Camera already scanning or needs restart. Stopping current stream.');
+      stopCamera();
+    }
 
     try {
       if (permissionStatus === 'denied') {
@@ -350,9 +346,10 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
         throw new Error('Failed to get camera stream with any constraint set');
       }
 
-      streamRef.current = stream; // Guardar el stream en la ref
-      setIsScanning(true); // Indicar que la cámara está activa
-      setActiveCameraId(selectedCameraId); // Establecer la cámara activa
+      streamRef.current = stream;
+      setIsScanning(true);
+      setActiveCameraId(selectedCameraId);
+      setHasInitialCameraStarted(true); // Marcar que la cámara ha iniciado al menos una vez
 
       addDebugInfo('=== CAMERA STREAM OBTAINED SUCCESSFULLY ===');
 
@@ -364,7 +361,7 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
         name: error.name || 'UnknownError',
         message: error.message || 'Unknown error occurred while starting camera'
       });
-      stopCamera(); // Asegurarse de detener la cámara si falla el inicio
+      stopCamera();
     }
   }, [toast, permissionStatus, getCameraConstraints, addDebugInfo, stopCamera, isScanning, activeCameraId, selectedCameraId]);
 
@@ -445,7 +442,6 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
   useEffect(() => {
     initializeZxingReader();
 
-    // Limpiar el lector al desmontar el componente
     return () => {
       if (codeReaderRef.current) {
         addDebugInfo('Resetting ZXing reader on unmount...');
@@ -456,21 +452,14 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
   }, [addDebugInfo, initializeZxingReader]);
 
   // Efecto para manejar el inicio/parada del escaneo ZXing
-  // Este efecto se encarga de:
-  // 1. Asignar el stream al video element
-  // 2. Esperar a que el video esté listo
-  // 3. Iniciar el escaneo de ZXing
-  // 4. Limpiar al desmontar o cuando isScanning se vuelve false
   useEffect(() => {
     let videoElement = videoRef.current;
     let currentStream = streamRef.current;
     let codeReader = codeReaderRef.current;
 
-    // Solo proceder si estamos escaneando, tenemos el elemento de video, el stream y el lector listo
     if (isScanning && videoElement && currentStream && codeReader) {
       addDebugInfo('Attaching stream to video element and preparing ZXing scan...');
 
-      // Asegurarse de que el srcObject se asigne solo una vez por stream
       if (videoElement.srcObject !== currentStream) {
         videoElement.srcObject = currentStream;
         addDebugInfo('Video srcObject assigned.');
@@ -479,8 +468,14 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
       const onCanPlay = () => {
         addDebugInfo('Video element ready for playback. Starting ZXing decode...');
         setZxingStatus('Scanning for codes...');
-        // Asegurarse de que el lector no esté ya decodificando del mismo dispositivo
-        // Esto es para evitar múltiples llamadas a decodeFromVideoDevice
+
+        // Asegurarse de que el video tenga dimensiones válidas antes de intentar getImageData
+        if (videoElement.videoWidth === 0 || videoElement.videoHeight === 0) {
+          addDebugInfo('Video element has zero dimensions, waiting for videoWidth/Height...');
+          // Podríamos añadir un setTimeout aquí o esperar otro 'canplay' event si es necesario
+          return;
+        }
+
         // @ts-ignore
         if (!codeReader.isDecoding && !codeReader.isScanning) {
           codeReader.decodeFromVideoDevice(
@@ -492,7 +487,7 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
                 const detectedCode = result.getText();
                 if (isValidVIN(detectedCode)) {
                   setManualVin(detectedCode);
-                  stopCamera(); // Detener la cámara una vez que se detecta un VIN válido
+                  stopCamera();
                   addDebugInfo(`VIN Detected via Barcode/QR: ${detectedCode}`);
                   toast({
                     title: "VIN Detected!",
@@ -503,10 +498,9 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
                   setZxingStatus(`Code found, but not a valid VIN: ${detectedCode.substring(0, 20)}...`);
                 }
               }
-              // Solo loguear errores de ZXing que no sean "No MultiFormat Readers" (que es normal si no hay código)
               if (error && !error.message.includes('No MultiFormat Readers')) {
-                addDebugInfo(`ZXing Error: ${error}`); // Descomentar para depurar errores de escaneo
-                setZxingStatus('Scanning...'); // Mantener el estado de escaneo si no es un error crítico
+                addDebugInfo(`ZXing Error: ${error}`);
+                setZxingStatus('Scanning...');
               }
             }
           );
@@ -524,7 +518,7 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
       videoElement.addEventListener('canplay', onCanPlay);
       videoElement.addEventListener('error', onError);
 
-      // Intentar reproducir el video. Si ya está reproduciéndose o listo, no hará nada.
+      // Intentar reproducir el video.
       // Si el video ya está listo, ejecutar onCanPlay inmediatamente
       if (videoElement.readyState >= 3) { // HAVE_FUTURE_DATA or higher
         onCanPlay();
@@ -546,22 +540,31 @@ export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
         }
       };
     } else if (!isScanning && codeReader) {
-      // Si isScanning es false, asegúrate de que el lector esté detenido
       addDebugInfo('isScanning is false, ensuring ZXing reader is reset.');
       codeReader.reset();
     }
   }, [isScanning, selectedCameraId, addDebugInfo, isValidVIN, toast, stopCamera]);
 
 
-  // Efecto para reiniciar la cámara si cambia la cámara seleccionada
-  // Este efecto solo debe disparar startCamera si ya estábamos escaneando
+  // Efecto para iniciar la cámara automáticamente al cargar el componente
+  // SOLO si los permisos están concedidos y aún no se ha iniciado la cámara inicialmente.
   useEffect(() => {
-    // Solo reiniciar si la cámara seleccionada ha cambiado Y no es la cámara que ya está activa
-    if (selectedCameraId && selectedCameraId !== activeCameraId) {
-      addDebugInfo(`Selected camera ID changed from ${activeCameraId} to ${selectedCameraId}. Restarting camera...`);
+    if (permissionStatus === 'granted' && selectedCameraId && !hasInitialCameraStarted) {
+      addDebugInfo('Initial camera start triggered by permission and selectedCameraId.');
       startCamera();
     }
-  }, [selectedCameraId, activeCameraId, startCamera, addDebugInfo]);
+  }, [permissionStatus, selectedCameraId, hasInitialCameraStarted, startCamera, addDebugInfo]);
+
+
+  // Efecto para reiniciar la cámara si el usuario cambia la cámara seleccionada manualmente
+  useEffect(() => {
+    // Solo reiniciar si la cámara seleccionada ha cambiado Y no es la cámara que ya está activa
+    // Y si ya hemos pasado la fase de inicio inicial (hasInitialCameraStarted)
+    if (hasInitialCameraStarted && selectedCameraId && selectedCameraId !== activeCameraId) {
+      addDebugInfo(`User changed selected camera ID from ${activeCameraId} to ${selectedCameraId}. Restarting camera...`);
+      startCamera();
+    }
+  }, [selectedCameraId, activeCameraId, hasInitialCameraStarted, startCamera, addDebugInfo]);
 
 
   return (
