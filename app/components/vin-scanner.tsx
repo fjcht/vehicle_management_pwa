@@ -3,10 +3,10 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { BrowserMultiFormatReader, DecodeHintType, Result } from '@zxing/library'
 import { Alert, AlertDescription, AlertTitle } from '@/app/components/ui/alert'
-// Asegúrate de que AlertTriangle esté importado aquí
-import { Loader2, CameraOff, Video, AlertTriangle, CheckCircle, XCircle } from 'lucide-react'
+import { Loader2, CameraOff, Video, AlertTriangle, CheckCircle, XCircle, Play, StopCircle } from 'lucide-react' // Added Play and StopCircle icons
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select'
 import { Label } from '@/app/components/ui/label'
+import { Button } from '@/app/components/ui/button' // Assuming you have a Button component
 
 interface VinScannerProps {
   onVinDetected: (vin: string) => void
@@ -21,7 +21,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(undefined)
   const [scanResult, setScanResult] = useState<string | null>(null)
-  const [isScanning, setIsScanning] = useState(false) // Track if scanning is active
+  const [isScanningActive, setIsScanningActive] = useState(false) // Controls if scanning should be active
 
   const hints = new Map<DecodeHintType, any>()
   hints.set(DecodeHintType.ASSUME_GS1, true)
@@ -37,11 +37,21 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     }
   }, [hints])
 
+  const stopScanning = useCallback(() => {
+    if (readerRef.current) {
+      console.log('[VIN Scanner] Stopping camera...')
+      readerRef.current.reset() // This stops the video stream and clears internal state
+      setIsCameraReady(false)
+      setIsScanningActive(false) // Ensure this is false when stopped
+    }
+  }, [])
+
   const startScanning = useCallback(async (deviceId: string) => {
     if (!videoRef.current) {
       console.error('[VIN Scanner] Video element not available.')
       setCameraError('Video element not ready. Please try again.')
       onError?.('Video element not ready.')
+      setIsScanningActive(false); // Ensure scanning is off if video not ready
       return
     }
 
@@ -49,16 +59,17 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
       console.error('[VIN Scanner] Reader not initialized.')
       setCameraError('Scanner not ready. Please refresh.')
       onError?.('Scanner not ready.')
+      setIsScanningActive(false); // Ensure scanning is off if reader not ready
       return
     }
 
-    // Stop any ongoing scan before starting a new one
+    // Reset reader before starting a new scan to clear previous streams
     readerRef.current.reset()
 
     setIsCameraReady(false)
     setCameraError(null)
     setScanResult(null)
-    setIsScanning(true) // Set scanning to active
+    setIsScanningActive(true) // Explicitly set scanning to active
 
     try {
       console.log(`[VIN Scanner] Attempting to start camera with deviceId: ${deviceId}`)
@@ -68,13 +79,11 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
           console.log('[VIN Scanner] VIN detected:', vin)
           setScanResult(vin)
           onVinDetected(vin)
-          readerRef.current?.reset() // Stop scanning after detection
-          setIsScanning(false) // Set scanning to inactive
+          stopScanning() // Stop scanning immediately after detection
         }
         // Only log scan errors if no result yet and it's not a common "no code found" error
         if (error && !scanResult && error.message !== 'No code found') {
           console.warn('[VIN Scanner] Scan error:', error.message);
-          // setScanError(error.message); // Don't set error for every frame
         }
       })
       console.log('[VIN Scanner] Camera stream obtained successfully.')
@@ -94,32 +103,20 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
       setCameraError(errorMessage)
       onError?.(errorMessage)
       setIsCameraReady(false)
-      setIsScanning(false) // Set scanning to inactive on error
+      setIsScanningActive(false) // Set scanning to inactive on error
     }
-  }, [onVinDetected, onError, hints, scanResult])
+  }, [onVinDetected, onError, scanResult, stopScanning]) // Added stopScanning to dependencies
 
-  const stopScanning = useCallback(() => {
-    if (readerRef.current) {
-      console.log('[VIN Scanner] Stopping camera...')
-      readerRef.current.reset()
-      setIsCameraReady(false)
-      setIsScanning(false)
-    }
-  }, [])
-
+  // Effect for initial device enumeration and cleanup
   useEffect(() => {
-    // Initial device enumeration
     const enumerateDevices = async () => {
       if (!readerRef.current) {
-        // Ensure reader is initialized before enumerating devices
         readerRef.current = new BrowserMultiFormatReader(hints);
       }
       try {
-        // Use the instance method listVideoInputDevices
         const videoInputDevices = await readerRef.current.listVideoInputDevices()
         setDevices(videoInputDevices)
         if (videoInputDevices.length > 0) {
-          // Prioritize back camera if available, otherwise select first
           const backCamera = videoInputDevices.find(device => device.label.toLowerCase().includes('back'))
           const defaultDeviceId = backCamera ? backCamera.deviceId : videoInputDevices[0].deviceId
           setSelectedDeviceId(defaultDeviceId)
@@ -140,24 +137,28 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     return () => {
       stopScanning()
     }
-  }, [stopScanning, onError, hints]) // Added hints to dependencies for reader initialization
+  }, [stopScanning, onError, hints])
 
-  // Effect to start/stop scanning based on selectedDeviceId and isScanning state
-  useEffect(() => {
-    if (selectedDeviceId && isScanning) {
-      startScanning(selectedDeviceId)
-    } else if (!isScanning) {
-      stopScanning()
-    }
-  }, [selectedDeviceId, isScanning, startScanning, stopScanning])
-
-
+  // Handler for device change
   const handleDeviceChange = (deviceId: string) => {
     setSelectedDeviceId(deviceId)
-    // Restart scanning with new device if already active
-    if (isScanning) {
+    // If scanning is active, restart with the new device
+    if (isScanningActive) {
       startScanning(deviceId)
     }
+  }
+
+  // Handlers for Start/Stop buttons
+  const handleStartScan = () => {
+    if (selectedDeviceId) {
+      startScanning(selectedDeviceId)
+    } else {
+      setCameraError('No camera selected or available.')
+    }
+  }
+
+  const handleStopScan = () => {
+    stopScanning()
   }
 
   return (
@@ -167,7 +168,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
         {devices.length > 1 && (
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <Label htmlFor="camera-select" className="sr-only sm:not-sr-only">Camera:</Label>
-            <Select value={selectedDeviceId} onValueChange={handleDeviceChange} disabled={!isCameraReady && isScanning}>
+            <Select value={selectedDeviceId} onValueChange={handleDeviceChange} disabled={isScanningActive}>
               <SelectTrigger id="camera-select" className="w-full sm:w-[180px]">
                 <SelectValue placeholder="Select Camera" />
               </SelectTrigger>
@@ -181,38 +182,51 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
             </Select>
           </div>
         )}
-        <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 w-full sm:w-auto justify-center sm:justify-end">
-          {!isScanning && !cameraError && (
-            <span className="flex items-center">
-              <Video className="h-4 w-4 mr-1 text-blue-500" /> Ready to scan
-            </span>
-          )}
-          {isScanning && !isCameraReady && !cameraError && (
-            <span className="flex items-center animate-pulse">
-              <Loader2 className="h-4 w-4 mr-1 text-blue-500" /> Starting camera...
-            </span>
-          )}
-          {isCameraReady && isScanning && !scanResult && (
-            <span className="flex items-center text-green-600 dark:text-green-400">
-              <CheckCircle className="h-4 w-4 mr-1" /> Scanning...
-            </span>
-          )}
-          {scanResult && (
-            <span className="flex items-center text-green-600 dark:text-green-400">
-              <CheckCircle className="h-4 w-4 mr-1" /> VIN Detected!
-            </span>
-          )}
-          {cameraError && (
-            <span className="flex items-center text-red-600 dark:text-red-400">
-              <AlertTriangle className="h-4 w-4 mr-1" /> {cameraError}
-            </span>
+        <div className="flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-end">
+          {!isScanningActive ? (
+            <Button onClick={handleStartScan} disabled={!selectedDeviceId || isScanningActive}>
+              <Play className="h-4 w-4 mr-2" /> Start Scan
+            </Button>
+          ) : (
+            <Button onClick={handleStopScan} disabled={!isScanningActive} variant="destructive">
+              <StopCircle className="h-4 w-4 mr-2" /> Stop Scan
+            </Button>
           )}
         </div>
       </div>
 
+      {/* Status Display */}
+      <div className="p-2 bg-gray-50 dark:bg-gray-700 text-sm text-gray-600 dark:text-gray-400 flex items-center justify-center gap-2">
+        {!isScanningActive && !cameraError && (
+          <span className="flex items-center">
+            <Video className="h-4 w-4 mr-1 text-blue-500" /> Ready to scan
+          </span>
+        )}
+        {isScanningActive && !isCameraReady && !cameraError && (
+          <span className="flex items-center animate-pulse">
+            <Loader2 className="h-4 w-4 mr-1 text-blue-500" /> Starting camera...
+          </span>
+        )}
+        {isCameraReady && isScanningActive && !scanResult && (
+          <span className="flex items-center text-green-600 dark:text-green-400">
+            <CheckCircle className="h-4 w-4 mr-1" /> Scanning...
+          </span>
+        )}
+        {scanResult && (
+          <span className="flex items-center text-green-600 dark:text-green-400">
+            <CheckCircle className="h-4 w-4 mr-1" /> VIN Detected!
+          </span>
+        )}
+        {cameraError && (
+          <span className="flex items-center text-red-600 dark:text-red-400">
+            <AlertTriangle className="h-4 w-4 mr-1" /> {cameraError}
+          </span>
+        )}
+      </div>
+
       {/* Video Feed */}
       <div className="relative flex-grow bg-black rounded-b-md overflow-hidden flex items-center justify-center">
-        {!isCameraReady && !cameraError && isScanning && (
+        {!isCameraReady && isScanningActive && !cameraError && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 text-white text-center p-4">
             <Loader2 className="h-10 w-10 animate-spin text-blue-400 mr-3" />
             <p className="text-lg">Waiting for camera stream...</p>
