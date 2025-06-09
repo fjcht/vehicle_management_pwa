@@ -1,54 +1,57 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { Camera, X, Check, Loader2, AlertTriangle, Smartphone, Monitor, Scan } from 'lucide-react'
+import { Camera, X, Check, Loader2, AlertTriangle, Smartphone, Monitor, QrCode } from 'lucide-react' // Añadido QrCode
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Badge } from './ui/badge'
-import { Alert, AlertDescription } from './ui/alert'
-import { decodeVIN, NHTSAVehicleData } from '@/lib/nhtsa'
-import { useToast } from '@/hooks/use-toast'
+import { useToast } from './ui/use-toast'
 
-// Importación dinámica de Tesseract.js
-// Esto asegura que Tesseract.js solo se cargue en el cliente
-let createWorker: typeof import('tesseract.js')['createWorker'];
-let PSM: typeof import('tesseract.js')['PSM'];
+// Importación de la librería ZXing
+import { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat } from '@zxing/library';
 
-// Función para validar si una cadena es un VIN (básica)
-const isValidVIN = (text: string): boolean => {
-  if (text.length !== 17) return false;
-  if (/[IOQioq]/.test(text)) return false;
-  if (!/^[A-HJ-NPR-Z0-9]{17}$/i.test(text)) return false;
-  return true;
-};
+interface VinScannerProps {
+  onVinDetected: (vin: string, vehicleData?: NHTSAVehicleData) => void
+  initialVin?: string
+}
 
-export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) {
+interface CameraError {
+  name: string
+  message: string
+  constraint?: string
+}
+
+// Definición de tipos para los datos de la NHTSA (si los usas)
+interface NHTSAVehicleData {
+  // Define la estructura de los datos del vehículo aquí
+  // Por ejemplo:
+  Make: string;
+  Model: string;
+  ModelYear: string;
+  VehicleType: string;
+  // ... otros campos relevantes
+}
+
+export function VinScanner({ onVinDetected, initialVin }: VinScannerProps) {
   const [isScanning, setIsScanning] = useState(false)
-  const [manualVin, setManualVin] = useState(initialVin)
+  const [manualVin, setManualVin] = useState(initialVin || '')
   const [isDecoding, setIsDecoding] = useState(false)
-  const [vehicleData, setVehicleData] = useState<NHTSAVehicleData | null>(null)
   const [cameraError, setCameraError] = useState<CameraError | null>(null)
-  const [permissionStatus, setPermissionStatus] = useState<'unknown' | 'granted' | 'denied' | 'prompt'>('unknown')
-  const [isMobile, setIsMobile] = useState(false)
+  const [permissionStatus, setPermissionStatus] = useState<PermissionState>('prompt')
   const [isCheckingPermissions, setIsCheckingPermissions] = useState(false)
+  const [isMobile, setIsMobile] = useState(false)
   const [debugInfo, setDebugInfo] = useState<string[]>([])
   const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([])
   const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null)
 
-  // Nuevos estados para Tesseract.js
-  const [isOcrLoading, setIsOcrLoading] = useState(false);
-  const [ocrProgress, setOcrProgress] = useState(0);
-  const [detectedVin, setDetectedVin] = useState<string | null>(null);
-  const [ocrStatus, setOcrStatus] = useState<string>('Idle');
-  const [isTesseractReady, setIsTesseractReady] = useState(false); // Nuevo estado para Tesseract
+  // Nuevos estados para ZXing
+  const [isZxingReady, setIsZxingReady] = useState(false);
+  const [zxingStatus, setZxingStatus] = useState<string>('Idle');
+  const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null); // Referencia al lector de códigos
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const ocrWorkerRef = useRef<any | null>(null); // Usar 'any' temporalmente para el worker
-  const scanIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const { toast } = useToast()
 
   const addDebugInfo = useCallback((info: string) => {
@@ -57,106 +60,6 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     console.log(`[VIN Scanner] ${info}`)
   }, [])
 
-  // Inicializar Tesseract Worker
-  const initializeOcrWorker = useCallback(async () => {
-    if (ocrWorkerRef.current || !isTesseractReady) { // Solo inicializar si Tesseract está cargado
-      addDebugInfo('OCR Worker already initialized or Tesseract not ready.');
-      return;
-    }
-    setIsOcrLoading(true);
-    setOcrStatus('Loading OCR engine...');
-    addDebugInfo('Initializing Tesseract OCR worker...');
-    try {
-      const worker = await createWorker('eng', 1, {
-        logger: m => {
-          if (m.status === 'recognizing') {
-            setOcrProgress(Math.round(m.progress * 100));
-            setOcrStatus(`Scanning... (${Math.round(m.progress * 100)}%)`);
-          } else {
-            setOcrStatus(m.status);
-          }
-          addDebugInfo(`OCR Worker: ${m.status} - ${m.progress ? (m.progress * 100).toFixed(0) + '%' : ''}`);
-        },
-      });
-      await worker.load();
-      await worker.loadLanguage('eng');
-      await worker.initialize('eng');
-      await worker.reco.setParameters({
-        tessedit_pageseg_mode: PSM.PSM_SINGLE_BLOCK
-      });
-      ocrWorkerRef.current = worker;
-      addDebugInfo('Tesseract OCR worker initialized successfully.');
-      setOcrStatus('OCR Ready');
-    } catch (error) {
-      addDebugInfo(`Error initializing OCR worker: ${error}`);
-      console.error('Error initializing Tesseract OCR worker:', error);
-      setCameraError({ name: 'OCRInitError', message: 'Failed to load OCR engine.' });
-      setOcrStatus('OCR Error');
-    } finally {
-      setIsOcrLoading(false);
-    }
-  }, [addDebugInfo, isTesseractReady]); // Dependencia de isTesseractReady
-
-  // Función para escanear un frame
-  const scanFrameForVIN = useCallback(async () => {
-    if (!videoRef.current || !canvasRef.current || !ocrWorkerRef.current || isDecoding) {
-      return;
-    }
-
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const context = canvas.getContext('2d');
-
-    if (!context) {
-      addDebugInfo('Canvas context not available.');
-      return;
-    }
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
-    context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    // Ajusta estos valores basándote en lo que observaste en el navegador
-    // Ejemplo: si el marco es 75% del ancho del video y 15% del alto del video
-    const roiWidth = canvas.width * 0.75; // Si w-3/4 es 75%
-    const roiHeight = canvas.height * 0.15; // Ajusta este porcentaje según el alto real de tu marco
-
-    const roiX = (canvas.width - roiWidth) / 2;
-    const roiY = (canvas.height - roiHeight) / 2;
-
-    const imageData = context.getImageData(roiX, roiY, roiWidth, roiHeight);
-
-    setOcrStatus('Scanning frame...');
-    try {
-      const { data: { text } } = await ocrWorkerRef.current.recognize(imageData);
-      addDebugInfo(`OCR Raw Text: "${text}"`);
-
-      const cleanedText = text.replace(/[^A-HJ-NPR-Z0-9]/gi, '').toUpperCase();
-      addDebugInfo(`OCR Cleaned Text: "${cleanedText}"`);
-
-      if (isValidVIN(cleanedText)) {
-        setDetectedVin(cleanedText);
-        setManualVin(cleanedText);
-        stopCamera();
-        addDebugInfo(`VIN Detected: ${cleanedText}`);
-        toast({
-          title: "VIN Detected!",
-          description: `Found VIN: ${cleanedText}. Please verify and submit.`,
-          variant: "success"
-        });
-      } else {
-        setDetectedVin(null);
-        setOcrStatus('No valid VIN found in frame.');
-      }
-    } catch (error) {
-      addDebugInfo(`OCR recognition error: ${error}`);
-      console.error('OCR recognition error:', error);
-      setOcrStatus('OCR Error during scan.');
-    }
-  }, [addDebugInfo, isDecoding, stopCamera, toast]);
-
-  // ... (resto del código de VinScanner, sin cambios hasta aquí) ...
   // Detect mobile device
   useEffect(() => {
     const checkMobile = () => {
@@ -164,39 +67,86 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       const isMobileDevice = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent.toLowerCase())
       const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0
       const isSmallScreen = window.innerWidth <= 768
-      
+
       const mobile = isMobileDevice || (isTouchDevice && isSmallScreen)
       setIsMobile(mobile)
-      
+
       addDebugInfo(`Device detection: ${mobile ? 'Mobile' : 'Desktop'}`)
       addDebugInfo(`User Agent: ${userAgent}`)
       addDebugInfo(`Touch support: ${isTouchDevice}`)
       addDebugInfo(`Screen width: ${window.innerWidth}px`)
-      
+
       return mobile
     }
-    
+
     checkMobile()
     window.addEventListener('resize', checkMobile)
     return () => window.removeEventListener('resize', checkMobile)
   }, [addDebugInfo])
 
-  // Check camera permissions
+  // Inicializar ZXing Code Reader
+  const initializeZxingReader = useCallback(() => {
+    if (codeReaderRef.current) {
+      addDebugInfo('ZXing Code Reader already initialized.');
+      return;
+    }
+    addDebugInfo('Initializing ZXing Code Reader...');
+    try {
+      // Configurar hints para mejorar la detección
+      const hints = new Map();
+      const formats = [
+        BarcodeFormat.CODE_39,
+        BarcodeFormat.CODE_93,
+        BarcodeFormat.CODE_128,
+        BarcodeFormat.EAN_8,
+        BarcodeFormat.EAN_13,
+        BarcodeFormat.QR_CODE,
+        BarcodeFormat.DATA_MATRIX,
+        BarcodeFormat.AZTEC,
+        BarcodeFormat.PDF_417, // VINs a veces usan PDF417
+        BarcodeFormat.ITF,
+        BarcodeFormat.UPC_A,
+        BarcodeFormat.UPC_E,
+      ];
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, formats);
+      hints.set(DecodeHintType.TRY_HARDER, true); // Intentar más para encontrar el código
+
+      const reader = new BrowserMultiFormatReader(hints);
+      codeReaderRef.current = reader;
+      setIsZxingReady(true);
+      addDebugInfo('ZXing Code Reader initialized successfully.');
+      setZxingStatus('Ready to scan');
+    } catch (error) {
+      addDebugInfo(`Error initializing ZXing reader: ${error}`);
+      console.error('Error initializing ZXing reader:', error);
+      setCameraError({ name: 'ZxingInitError', message: 'Failed to load barcode scanner engine.' });
+      setZxingStatus('Error');
+    }
+  }, [addDebugInfo]);
+
+  // Función para validar si una cadena es un VIN (básica)
+  const isValidVIN = (text: string): boolean => {
+    if (text.length !== 17) return false;
+    if (/[IOQioq]/.test(text)) return false; // I, O, Q no se usan en VINs
+    if (!/^[A-HJ-NPR-Z0-9]{17}$/i.test(text)) return false; // Solo caracteres válidos
+    return true;
+  };
+
   const checkCameraPermissions = useCallback(async () => {
     setIsCheckingPermissions(true)
     addDebugInfo('=== CHECKING CAMERA PERMISSIONS ===')
-    
+
     try {
       addDebugInfo('Checking MediaDevices API availability...')
       if (!navigator.mediaDevices) {
         throw new Error('MediaDevices API not supported in this browser')
       }
-      addDebugInfo('✓ MediaDevices API available')
-      
+      addDebugInfo('✔ MediaDevices API available')
+
       if (!navigator.mediaDevices.getUserMedia) {
         throw new Error('getUserMedia not supported in this browser')
       }
-      addDebugInfo('✓ getUserMedia available')
+      addDebugInfo('✔ getUserMedia available')
 
       addDebugInfo('Checking Permissions API...')
       if ('permissions' in navigator) {
@@ -204,18 +154,18 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
           addDebugInfo('Querying camera permission...')
           const permission = await navigator.permissions.query({ name: 'camera' as PermissionName })
           setPermissionStatus(permission.state)
-          addDebugInfo(`✓ Permission API result: ${permission.state}`)
-          
+          addDebugInfo(`✔ Permission API result: ${permission.state}`)
+
           permission.onchange = () => {
             setPermissionStatus(permission.state)
             addDebugInfo(`Permission changed to: ${permission.state}`)
           }
         } catch (permError) {
-          addDebugInfo(`✗ Permissions API error: ${permError}`)
+          addDebugInfo(`✖ Permissions API error: ${permError}`)
           setPermissionStatus('unknown')
         }
       } else {
-        addDebugInfo('✗ Permissions API not available')
+        addDebugInfo('✖ Permissions API not available')
         setPermissionStatus('unknown')
       }
 
@@ -223,23 +173,23 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       try {
         addDebugInfo('Calling getUserMedia for permission test...')
         const testStream = await navigator.mediaDevices.getUserMedia({ video: true })
-        
-        addDebugInfo(`✓ Camera access test successful`)
+
+        addDebugInfo(`✔ Camera access test successful`)
         testStream.getTracks().forEach((track, index) => {
           addDebugInfo(`Test track ${index}: ${track.kind}, enabled: ${track.enabled}`)
           track.stop()
           addDebugInfo(`Test track ${index} stopped`)
         })
-        
+
         setPermissionStatus('granted')
         addDebugInfo('=== PERMISSION CHECK SUCCESSFUL ===')
-        
+
       } catch (testError) {
-        addDebugInfo(`✗ Camera access test failed: ${testError}`)
+        addDebugInfo(`✖ Camera access test failed: ${testError}`)
         if (testError instanceof Error) {
           addDebugInfo(`Test error name: ${testError.name}`)
           addDebugInfo(`Test error message: ${testError.message}`)
-          
+
           if (testError.name === 'NotAllowedError') {
             setPermissionStatus('denied')
             addDebugInfo('Permission status set to: denied')
@@ -289,8 +239,8 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       videoDevices.forEach((device, index) => addDebugInfo(`Device ${index}: id=${device.deviceId}, label=${device.label || 'No label (permission needed)'}, facingMode=${(device as any).facingMode || 'unknown'}`));
 
       if (!selectedCameraId && videoDevices.length > 0) {
-        const rearCamera = videoDevices.find(device => 
-          device.label.toLowerCase().includes('back') || 
+        const rearCamera = videoDevices.find(device =>
+          device.label.toLowerCase().includes('back') ||
           device.label.toLowerCase().includes('environment') ||
           (device as any).facingMode === 'environment'
         );
@@ -348,10 +298,9 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
 
   const stopCamera = useCallback(() => {
     addDebugInfo('Stopping camera...')
-    if (scanIntervalRef.current) {
-      clearInterval(scanIntervalRef.current);
-      scanIntervalRef.current = null;
-      addDebugInfo('OCR scan interval stopped.');
+    if (codeReaderRef.current) {
+      codeReaderRef.current.reset(); // Detener el lector de ZXing
+      addDebugInfo('ZXing reader reset.');
     }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => {
@@ -363,19 +312,18 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
     if (videoRef.current) {
       videoRef.current.srcObject = null
       videoRef.current.pause();
-      videoRef.current.load(); 
+      videoRef.current.load();
     }
     setIsScanning(false)
-    setDetectedVin(null);
-    setOcrStatus('Idle');
+    setZxingStatus('Idle');
     addDebugInfo('Camera stopped')
   }, [addDebugInfo])
 
   const startCamera = useCallback(async () => {
     addDebugInfo('=== STARTING CAMERA PROCESS ===')
     setCameraError(null)
-    
-    stopCamera();
+
+    stopCamera(); // Asegurarse de que cualquier cámara anterior esté detenida
 
     try {
       if (permissionStatus === 'denied') {
@@ -386,25 +334,25 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('getUserMedia not supported in this browser')
       }
-      addDebugInfo('✓ getUserMedia is available')
+      addDebugInfo('✔ getUserMedia is available')
 
       let videoElement = videoRef.current
       let retryCount = 0
       const maxRetries = 10
-      
+
       while (!videoElement && retryCount < maxRetries) {
         addDebugInfo(`Video element not ready, waiting... (attempt ${retryCount + 1}/${maxRetries})`)
         await new Promise(resolve => setTimeout(resolve, 100))
         videoElement = videoRef.current
         retryCount++
       }
-      
+
       if (!videoElement) {
-        addDebugInfo('✗ Video element still not available after retries')
+        addDebugInfo('✖ Video element still not available after retries')
         throw new Error('Video element not available in DOM. Please try again.')
       }
-      
-      addDebugInfo('✓ Video element is available')
+
+      addDebugInfo('✔ Video element is available')
       addDebugInfo(`Video element properties: tagName=${videoElement.tagName}, readyState=${videoElement.readyState}, networkState=${videoElement.networkState}`)
 
       const constraints = getCameraConstraints();
@@ -416,9 +364,9 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
         const timeoutPromise = new Promise((_, reject) => {
           setTimeout(() => reject(new Error('getUserMedia timeout after 10 seconds')), 10000);
         });
-        
+
         stream = await Promise.race([getUserMediaPromise, timeoutPromise]) as MediaStream;
-        addDebugInfo(`✓ SUCCESS with selected constraints`);
+        addDebugInfo(`✔ SUCCESS with selected constraints`);
         stream.getTracks().forEach((track, index) => {
           addDebugInfo(`Track ${index}: ${track.kind}, enabled: ${track.enabled}, readyState: ${track.readyState}`);
           if (track.kind === 'video') {
@@ -427,7 +375,7 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
           }
         });
       } catch (constraintError) {
-        addDebugInfo(`✗ FAILED with specified constraints: ${constraintError}`);
+        addDebugInfo(`✖ FAILED with specified constraints: ${constraintError}`);
         if (constraintError instanceof Error) {
           addDebugInfo(`Error name: ${constraintError.name}`);
           addDebugInfo(`Error message: ${constraintError.message}`);
@@ -435,9 +383,9 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
         addDebugInfo('Attempting fallback to basic video: true constraints...');
         try {
           stream = await navigator.mediaDevices.getUserMedia({ video: true });
-          addDebugInfo('✓ SUCCESS with fallback constraints: { video: true }');
+          addDebugInfo('✔ SUCCESS with fallback constraints: { video: true }');
         } catch (fallbackError) {
-          addDebugInfo(`✗ FAILED with fallback constraints: ${fallbackError}`);
+          addDebugInfo(`✖ FAILED with fallback constraints: ${fallbackError}`);
           throw fallbackError;
         }
       }
@@ -449,68 +397,66 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
       addDebugInfo('Final video element check before stream assignment...')
       const finalVideoElement = videoRef.current
       if (!finalVideoElement) {
-        addDebugInfo('✗ Video element disappeared during camera setup')
+        addDebugInfo('✖ Video element disappeared during camera setup')
         stream.getTracks().forEach(track => track.stop())
         throw new Error('Video element became unavailable during setup')
       }
 
       addDebugInfo('Setting up video element...')
       addDebugInfo(`Final video element state: readyState=${finalVideoElement.readyState}, networkState=${finalVideoElement.networkState}`)
-      
+
       try {
         finalVideoElement.srcObject = stream
         streamRef.current = stream
-        addDebugInfo('✓ Stream assigned to video element successfully')
+        addDebugInfo('✔ Stream assigned to video element successfully')
       } catch (streamError) {
-        addDebugInfo(`✗ Error assigning stream to video: ${streamError}`)
+        addDebugInfo(`✖ Error assigning stream to video: ${streamError}`)
         stream.getTracks().forEach(track => track.stop())
         throw new Error(`Failed to assign stream to video element: ${streamError}`)
       }
-      
+
       await new Promise<void>((resolve, reject) => {
         const timeoutId = setTimeout(() => {
-          addDebugInfo('✗ Video loading timeout after 8 seconds')
           finalVideoElement.removeEventListener('loadedmetadata', onLoadedMetadata)
-          finalVideoElement.removeEventListener('error', onError)
           finalVideoElement.removeEventListener('canplay', onCanPlay)
-          reject(new Error('Video loading timeout'))
-        }, 8000)
-        
+          finalVideoElement.removeEventListener('error', onError)
+          addDebugInfo('✖ Video ready timeout')
+          reject(new Error('Video did not become ready in time'))
+        }, 5000) // 5 seconds timeout
+
         const onLoadedMetadata = () => {
-          addDebugInfo(`✓ Video metadata loaded: ${finalVideoElement.videoWidth}x${finalVideoElement.videoHeight}`)
+          addDebugInfo(`✔ Video metadata loaded: ${finalVideoElement.videoWidth}x${finalVideoElement.videoHeight}`)
         }
-        
+
         const onCanPlay = () => {
-          addDebugInfo('✓ Video can play')
+          addDebugInfo('✔ Video can play')
           clearTimeout(timeoutId)
           finalVideoElement.removeEventListener('loadedmetadata', onLoadedMetadata)
-          finalVideoElement.removeEventListener('error', onError)
           finalVideoElement.removeEventListener('canplay', onCanPlay)
+          finalVideoElement.removeEventListener('error', onError)
           resolve()
         }
-        
+
         const onError = (e: Event) => {
-          addDebugInfo(`✗ Video error event: ${e}`)
+          addDebugInfo(`✖ Video error event: ${e}`)
           addDebugInfo(`Video error details: ${finalVideoElement.error?.message || 'Unknown error'}`)
           clearTimeout(timeoutId)
           finalVideoElement.removeEventListener('loadedmetadata', onLoadedMetadata)
-          finalVideoElement.removeEventListener('error', onError)
           finalVideoElement.removeEventListener('canplay', onCanPlay)
-          reject(new Error(`Video loading failed: ${finalVideoElement.error?.message || 'Unknown video error'}`))
+          finalVideoElement.removeEventListener('error', onError)
+          reject(new Error(`Video playback error: ${finalVideoElement.error?.message || 'Unknown'}`))
         }
-        
+
         finalVideoElement.addEventListener('loadedmetadata', onLoadedMetadata)
-        finalVideoElement.addEventListener('error', onError)
         finalVideoElement.addEventListener('canplay', onCanPlay)
-        
-        addDebugInfo(`Current video readyState: ${finalVideoElement.readyState}`)
-        
-        if (finalVideoElement.readyState >= 3) {
+        finalVideoElement.addEventListener('error', onError)
+
+        if (finalVideoElement.readyState >= 3) { // HAVE_FUTURE_DATA or higher
           addDebugInfo('Video already can play, resolving immediately')
           clearTimeout(timeoutId)
           finalVideoElement.removeEventListener('loadedmetadata', onLoadedMetadata)
-          finalVideoElement.removeEventListener('error', onError)
           finalVideoElement.removeEventListener('canplay', onCanPlay)
+          finalVideoElement.removeEventListener('error', onError)
           resolve()
         } else {
           finalVideoElement.play().catch(playError => {
@@ -518,305 +464,197 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
           });
         }
       })
-      
+
       setIsScanning(true)
       addDebugInfo('=== CAMERA STARTED SUCCESSFULLY ===')
 
-      // Iniciar el escaneo de VIN con Tesseract.js
-      if (ocrWorkerRef.current) {
-        addDebugInfo('Starting OCR scan interval...');
-        scanIntervalRef.current = setInterval(scanFrameForVIN, 500); 
+      // Iniciar el escaneo de códigos de barras/QR con ZXing
+      if (codeReaderRef.current && videoRef.current) {
+        addDebugInfo('Starting ZXing barcode scan...');
+        setZxingStatus('Scanning for codes...');
+        codeReaderRef.current.decodeFromVideoDevice(selectedCameraId || undefined, videoRef.current, (result, error) => {
+          if (result) {
+            addDebugInfo(`ZXing Detected: ${result.getText()} (Format: ${result.getBarcodeFormat().toString()})`);
+            const detectedCode = result.getText();
+            // Aquí puedes añadir lógica para verificar si el código es un VIN
+            // Por ejemplo, si esperas que el VIN esté en un QR o CODE_39
+            if (isValidVIN(detectedCode)) {
+              setManualVin(detectedCode);
+              stopCamera();
+              addDebugInfo(`VIN Detected via Barcode/QR: ${detectedCode}`);
+              toast({
+                title: "VIN Detected!",
+                description: `Found VIN: ${detectedCode}. Please verify and submit.`,
+                variant: "success"
+              });
+            } else {
+              setZxingStatus(`Code found, but not a valid VIN: ${detectedCode.substring(0, 20)}...`);
+            }
+          }
+          if (error && !codeReaderRef.current?.is
+            ) { // Evitar errores de "No MultiFormat Readers" que son comunes si no hay código
+            // addDebugInfo(`ZXing Error: ${error}`); // Descomentar para depurar errores de escaneo
+            setZxingStatus('Scanning...'); // Mantener el estado de escaneo si no es un error crítico
+          }
+        });
       } else {
-        addDebugInfo('OCR worker not ready, cannot start scan interval.');
-        setOcrStatus('OCR not ready for scan.');
+        addDebugInfo('ZXing reader or video element not ready, cannot start scan.');
+        setZxingStatus('Scanner not ready.');
       }
-      
-      toast({
-        title: "Camera Ready",
-        description: isMobile ? "Position your device over the VIN" : "Position the VIN in the camera view",
-      })
-      
+
     } catch (error) {
       addDebugInfo(`=== CAMERA START FAILED ===`)
-      addDebugInfo(`Error: ${error}`)
-      console.error('Error accessing camera:', error)
-      
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop())
-        streamRef.current = null
-      }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null
-        videoRef.current.pause();
-        videoRef.current.load();
-      }
-      
-      let errorMessage = 'Unable to access camera'
-      let errorName = 'CameraError'
-      
-      if (error instanceof Error) {
-        errorName = error.name
-        addDebugInfo(`Error name: ${errorName}`)
-        addDebugInfo(`Error message: ${error.message}`)
-        
-        switch (error.name) {
-          case 'NotAllowedError':
-            errorMessage = 'Camera permission denied. Please allow camera access and try again.'
-            setPermissionStatus('denied')
-            break
-          case 'NotFoundError':
-            errorMessage = 'No camera found on this device.'
-            break
-          case 'NotReadableError':
-            errorMessage = 'Camera is already in use by another application.'
-            break
-          case 'OverconstrainedError':
-            errorMessage = 'Camera constraints not supported on this device.'
-            break
-          case 'SecurityError':
-            errorMessage = 'Camera access blocked by security policy.'
-            break
-          case 'AbortError':
-            errorMessage = 'Camera access was aborted.'
-            break
-          default:
-            errorMessage = error.message || 'Unknown camera error'
-        }
-      }
-      
-      setCameraError({ name: errorName, message: errorMessage })
-      toast({
-        title: "Camera Error",
-        description: errorMessage + " Please enter VIN manually.",
-        variant: "destructive"
+      addDebugInfo(`Camera start error: ${error}`)
+      console.error('Error starting camera:', error)
+      setCameraError({
+        name: error instanceof Error ? error.name : 'UnknownError',
+        message: error instanceof Error ? error.message : 'Unknown error occurred while starting camera'
       })
+      stopCamera()
     }
-  }, [toast, permissionStatus, getCameraConstraints, addDebugInfo, isMobile, stopCamera, scanFrameForVIN]);
+  }, [toast, permissionStatus, getCameraConstraints, addDebugInfo, isMobile, stopCamera, selectedCameraId]);
 
-  const handleManualVinSubmit = async () => {
-    if (!manualVin || manualVin.length !== 17) {
+  const decodeVin = useCallback(async () => {
+    if (!manualVin) {
       toast({
-        title: "Invalid VIN",
-        description: "VIN must be exactly 17 characters long.",
-        variant: "destructive"
+        title: "VIN Required",
+        description: "Please enter a VIN to decode.",
+        variant: "destructive",
       })
       return
     }
 
     setIsDecoding(true)
     addDebugInfo(`Decoding VIN: ${manualVin}`)
-    
+    setCameraError(null)
+
     try {
-      const data = await decodeVIN(manualVin)
-      setVehicleData(data)
-      onVinDetected(manualVin, data || undefined)
-      
-      addDebugInfo(`VIN decoded successfully: ${data ? 'con datos' : 'sin datos'}`)
-      toast({
-        title: "VIN Processed",
-        description: data ? "Vehicle information retrieved successfully." : "VIN processed, but no additional data available.",
-      })
+      const response = await fetch(`https://vpic.nhtsa.dot.gov/api/vehicles/decodevin/${manualVin}?format=json`)
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      const data = await response.json()
+
+      if (data.Results && data.Results.length > 0 && data.Results[0].ErrorCode === '0') {
+        const vehicleData: NHTSAVehicleData = data.Results.reduce((acc: any, item: any) => {
+          if (item.Value && item.Value !== 'Not Applicable') {
+            acc[item.Variable] = item.Value
+          }
+          return acc
+        }, {})
+        addDebugInfo(`VIN decoded successfully: con datos`)
+        onVinDetected(manualVin, vehicleData)
+        toast({
+          title: "VIN Decoded Successfully",
+          description: `Vehicle: ${vehicleData.Make || ''} ${vehicleData.Model || ''} (${vehicleData.ModelYear || ''})`,
+          variant: "success",
+        })
+      } else {
+        addDebugInfo(`VIN decode failed: ${data.Message || 'No data found'}`)
+        onVinDetected(manualVin, undefined)
+        toast({
+          title: "VIN Decode Failed",
+          description: data.Message || "Could not retrieve vehicle data for this VIN. Please check the VIN.",
+          variant: "destructive",
+        })
+      }
     } catch (error) {
-      addDebugInfo(`VIN decode error: ${error}`)
+      addDebugInfo(`Error decoding VIN: ${error}`)
       console.error('Error decoding VIN:', error)
+      setCameraError({
+        name: 'DecodeError',
+        message: error instanceof Error ? error.message : 'Failed to decode VIN'
+      })
       toast({
-        title: "Error",
-        description: "Failed to decode VIN. Please try again.",
-        variant: "destructive"
+        title: "Decoding Error",
+        description: "Failed to connect to VIN decoding service. Please try again later.",
+        variant: "destructive",
       })
     } finally {
       setIsDecoding(false)
     }
-  }
+  }, [manualVin, onVinDetected, addDebugInfo, toast])
 
   // Auto-check permissions on mount
   useEffect(() => {
     checkCameraPermissions();
   }, [checkCameraPermissions]);
 
-  // Nuevo: Enumerar cámaras cuando se otorgan permisos o al montar
+  // Enumerar cámaras cuando se otorgan permisos o al montar
   useEffect(() => {
     if (permissionStatus === 'granted') {
       enumerateCameras();
     }
   }, [permissionStatus, enumerateCameras]);
 
-  // Cargar Tesseract.js dinámicamente
+  // Inicializar ZXing reader al montar
   useEffect(() => {
-    addDebugInfo('Attempting to dynamically import Tesseract.js...');
-    import('tesseract.js')
-      .then(module => {
-        createWorker = module.createWorker;
-        PSM = module.PSM;
-        setIsTesseractReady(true);
-        addDebugInfo('Tesseract.js imported successfully.');
-      })
-      .catch(error => {
-        addDebugInfo(`Failed to import Tesseract.js: ${error}`);
-        console.error('Failed to import Tesseract.js:', error);
-        setCameraError({ name: 'TesseractLoadError', message: 'Failed to load OCR library.' });
-      });
+    initializeZxingReader();
 
-    // Limpiar el worker al desmontar el componente
+    // Limpiar el lector al desmontar el componente
     return () => {
-      if (ocrWorkerRef.current) {
-        addDebugInfo('Terminating OCR worker...');
-        ocrWorkerRef.current.terminate();
-        ocrWorkerRef.current = null;
-      }
-      if (scanIntervalRef.current) {
-        clearInterval(scanIntervalRef.current);
-        scanIntervalRef.current = null;
+      if (codeReaderRef.current) {
+        addDebugInfo('Resetting ZXing reader on unmount...');
+        codeReaderRef.current.reset();
+        codeReaderRef.current = null;
       }
     };
-  }, [addDebugInfo]);
+  }, [addDebugInfo, initializeZxingReader]);
 
-  // Inicializar OCR worker cuando Tesseract esté listo
+  // Efecto para reiniciar la cámara si cambia la cámara seleccionada
   useEffect(() => {
-    if (isTesseractReady) {
-      initializeOcrWorker();
+    if (isScanning && selectedCameraId) {
+      addDebugInfo(`Selected camera changed to ${selectedCameraId}, restarting camera...`);
+      startCamera();
     }
-  }, [isTesseractReady, initializeOcrWorker]);
+  }, [selectedCameraId, isScanning, startCamera, addDebugInfo]);
 
-
-  // Ensure video element is available after mount
-  useEffect(() => {
-    addDebugInfo('Component mounted, checking video element...')
-    if (videoRef.current) {
-      addDebugInfo('✓ Video element available after mount')
-      addDebugInfo(`Video element details: tagName=${videoRef.current.tagName}, id=${videoRef.current.id || 'none'}`)
-    } else {
-      addDebugInfo('✗ Video element not available after mount')
-    }
-  }, [addDebugInfo])
 
   return (
-    <Card className="w-full max-w-md mx-auto">
-      <CardHeader>
-        <CardTitle className="flex items-center space-x-2">
-          <Camera className="w-5 h-5" />
-          <span>VIN Scanner</span>
-          {isMobile ? (
-            <Smartphone className="w-4 h-4 text-blue-500" />
-          ) : (
-            <Monitor className="w-4 h-4 text-gray-500" />
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Permission Status */}
-        {permissionStatus !== 'unknown' && (
-          <Alert className={
-            permissionStatus === 'granted' ? 'border-green-200 bg-green-50' :
-            permissionStatus === 'denied' ? 'border-red-200 bg-red-50' :
-            'border-yellow-200 bg-yellow-50'
-          }>
-            <div className="flex items-center space-x-2">
-              {permissionStatus === 'granted' ? (
-                <Check className="w-4 h-4 text-green-600" />
-              ) : permissionStatus === 'denied' ? (
-                <X className="w-4 h-4 text-red-600" />
-              ) : (
-                <AlertTriangle className="w-4 h-4 text-yellow-600" />
-              )}
-              <AlertDescription>
-                Camera permission: {permissionStatus}
-                {permissionStatus === 'denied' && (
-                  <span className="block text-sm mt-1">
-                    Please enable camera access in your browser settings
-                  </span>
-                )}
-              </AlertDescription>
+    <div className="flex flex-col items-center justify-center p-4 space-y-4">
+      <h3 className="text-2xl font-bold">VIN Scanner</h3>
+
+      {isScanning ? (
+        <div className="relative w-full max-w-md aspect-video bg-gray-900 rounded-lg overflow-hidden">
+          <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"></video>
+          {/* Marco de posici├│n del VIN - SIN FONDO NEGRO */}
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="border-2 border-white border-dashed w-3/4 h-16 rounded-lg flex items-center justify-center">
+              <span className="text-white text-sm font-medium">Position Barcode/QR here</span>
             </div>
-          </Alert>
-        )}
+          </div>
 
-        {/* Camera Error Display */}
-        {cameraError && (
-          <Alert className="border-red-200 bg-red-50">
-            <AlertTriangle className="w-4 h-4 text-red-600" />
-            <AlertDescription>
-              <strong>{cameraError.name}:</strong> {cameraError.message}
-              {isMobile && (
-                <div className="mt-2 text-sm">
-                  <strong>Mobile Tips:</strong>
-                  <ul className="list-disc list-inside mt-1">
-                    <li>Make sure camera permission is enabled</li>
-                    <li>Close other apps using the camera</li>
-                    <li>Try refreshing the page</li>
-                    <li>Use manual VIN entry as alternative</li>
-                  </ul>
-                </div>
+          {/* Botones de control de la cámara */}
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex space-x-2">
+            <Button
+              size={isMobile ? "default" : "sm"}
+              variant="outline"
+              onClick={stopCamera}
+              className={isMobile ? "px-4 py-2" : ""}
+            >
+              <X className="w-4 h-4" />
+              {isMobile && <span className="ml-2">Stop Scan</span>}
+            </Button>
+          </div>
+          {/* Indicador de escaneo ZXing */}
+          <div className="absolute bottom-2 left-2 right-2">
+            <Badge className="w-full justify-center text-center">
+              {zxingStatus === 'Scanning for codes...' ? (
+                <>
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                  {zxingStatus}
+                </>
+              ) : (
+                <>
+                  <QrCode className="w-3 h-3 mr-1" />
+                  {zxingStatus}
+                </>
               )}
-            </AlertDescription>
-          </Alert>
-        )}
-
-        {/* Camera View - Always render video element but conditionally show */}
-        <div className={`relative ${isScanning ? 'block' : 'hidden'}`}>
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full h-48 bg-black rounded-lg"
-            style={{ objectFit: 'cover' }}
-            onLoadStart={() => addDebugInfo('Video loadstart event')}
-            onLoadedMetadata={() => addDebugInfo('Video loadedmetadata event')}
-            onCanPlay={() => addDebugInfo('Video canplay event')}
-            onError={(e) => addDebugInfo(`Video error event: ${e}`)}
-          />
-          {/* Canvas para capturar frames (oculto) */}
-          <canvas ref={canvasRef} className="hidden" />
-
-          {isScanning && (
-            <>
-              <div className="absolute inset-0 flex items-center justify-center">
-                {/* Marco de posición del VIN - SIN FONDO NEGRO */}
-                <div className="border-2 border-white border-dashed w-3/4 h-16 rounded-lg flex items-center justify-center">
-                  <span className="text-white text-sm font-medium">Position VIN here</span>
-                </div>
-              </div>
-              <div className="absolute top-2 right-2 space-x-2">
-                <Button 
-                  size={isMobile ? "default" : "sm"} 
-                  variant="outline" 
-                  onClick={stopCamera}
-                  className={isMobile ? "px-4 py-2" : ""}
-                >
-                  <X className="w-4 h-4" />
-                  {isMobile && <span className="ml-2">Close</span>}
-                </Button>
-              </div>
-              {isMobile && (
-                <div className="absolute bottom-2 left-2 right-2">
-                  <div className="bg-black bg-opacity-60 text-white text-xs p-2 rounded text-center">
-                    Hold steady and position VIN clearly in the frame
-                  </div>
-                </div>
-              )}
-              {/* Indicador de escaneo OCR */}
-              <div className="absolute bottom-2 left-2 right-2">
-                <Badge className="w-full justify-center text-center">
-                  {isOcrLoading ? (
-                    <>
-                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                      {ocrStatus} ({ocrProgress}%)
-                    </>
-                  ) : (
-                    <>
-                      <Scan className="w-3 h-3 mr-1" />
-                      {ocrStatus}
-                    </>
-                  )}
-                </Badge>
-              </div>
-            </>
-          )}
+            </Badge>
+          </div>
         </div>
-
-        {/* Camera Controls */}
-        {!isScanning && (
+      ) : (
+        <div className="w-full max-w-md space-y-4">
           <div className="space-y-2">
             {/* Selector de cámara */}
             {availableCameras.length > 1 && (
@@ -837,10 +675,10 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
               </div>
             )}
 
-            <Button 
-              onClick={startCamera} 
+            <Button
+              onClick={startCamera}
               className="w-full"
-              disabled={isCheckingPermissions || permissionStatus === 'denied' || isOcrLoading || !isTesseractReady} // Deshabilitar si Tesseract no está listo
+              disabled={isCheckingPermissions || permissionStatus === 'denied' || !isZxingReady} // Deshabilitar si ZXing no está listo
               size={isMobile ? "lg" : "default"}
             >
               {isCheckingPermissions ? (
@@ -848,105 +686,75 @@ export function VinScanner({ onVinDetected, initialVin = '' }: VinScannerProps) 
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   Checking Permissions...
                 </>
-              ) : isOcrLoading ? (
+              ) : !isZxingReady ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Loading OCR... ({ocrProgress}%)
-                </>
-              ) : !isTesseractReady ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Loading OCR Library...
+                  Loading Scanner...
                 </>
               ) : (
                 <>
                   <Camera className="w-4 h-4 mr-2" />
-                  Start Camera Scan
+                  Start Scan
                 </>
               )}
             </Button>
-            
-            {permissionStatus === 'denied' && (
-              <Button 
-                onClick={checkCameraPermissions} 
-                variant="outline" 
-                className="w-full"
-                size={isMobile ? "lg" : "default"}
-              >
-                Retry Camera Access
-              </Button>
-            )}
           </div>
-        )}
 
-        {/* Manual VIN Input */}
-        <div className="space-y-2">
-          <Label htmlFor="manual-vin">Or enter VIN manually:</Label>
-          <div className="flex space-x-2">
+          {cameraError && (
+            <div className="flex items-center p-3 text-sm text-red-800 rounded-lg bg-red-50 dark:bg-gray-800 dark:text-red-400" role="alert">
+              <AlertTriangle className="w-4 h-4 mr-2" />
+              <div>
+                <span className="font-medium">{cameraError.name}:</span> {cameraError.message}
+              </div>
+            </div>
+          )}
+
+          <div className="relative">
+            <Label htmlFor="manual-vin">Or Enter VIN Manually:</Label>
             <Input
               id="manual-vin"
+              type="text"
+              placeholder="Enter VIN (17 characters)"
               value={manualVin}
               onChange={(e) => setManualVin(e.target.value.toUpperCase())}
-              placeholder="Enter 17-character VIN"
               maxLength={17}
               className={`font-mono ${isMobile ? 'text-lg' : ''}`}
               style={isMobile ? { fontSize: '16px' } : {}}
             />
-            <Button 
-              onClick={handleManualVinSubmit}
-              disabled={isDecoding || manualVin.length !== 17}
-              size={isMobile ? "lg" : "default"}
-            >
-              {isDecoding ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Check className="w-4 h-4" />
-              )}
-            </Button>
+            {manualVin && isValidVIN(manualVin) && (
+              <Check className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-green-500" />
+            )}
           </div>
-          {manualVin && (
-            <div className="text-sm text-gray-500">
-              {manualVin.length}/17 characters
-              {manualVin.length === 17 && (
-                <span className="ml-2 text-green-600">✓ Valid length</span>
-              )}
-            </div>
-          )}
-        </div>
 
-        {/* Vehicle Data Display */}
-        {vehicleData && (
-          <div className="space-y-2">
-            <Label>Vehicle Information:</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {vehicleData.Make && (
-                <Badge variant="secondary">Make: {vehicleData.Make}</Badge>
-              )}
-              {vehicleData.Model && (
-                <Badge variant="secondary">Model: {vehicleData.Model}</Badge>
-              )}
-              {vehicleData.ModelYear && (
-                <Badge variant="secondary">Year: {vehicleData.ModelYear}</Badge>
-              )}
-              {vehicleData.FuelTypePrimary && (
-                <Badge variant="secondary">Fuel: {vehicleData.FuelTypePrimary}</Badge>
-              )}
-            </div>
-          </div>
-        )}
+          <Button
+            onClick={decodeVin}
+            className="w-full"
+            disabled={!isValidVIN(manualVin) || isDecoding}
+            size={isMobile ? "lg" : "default"}
+          >
+            {isDecoding ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Decoding VIN...
+              </>
+            ) : (
+              <>
+                <Check className="w-4 h-4 mr-2" />
+                Decode VIN
+              </>
+            )}
+          </Button>
 
-        {/* Debug Information (only in development) */}
-        {process.env.NODE_ENV === 'development' && debugInfo.length > 0 && (
-          <details className="text-xs">
-            <summary className="cursor-pointer text-gray-500">Debug Info</summary>
-            <div className="mt-2 p-2 bg-gray-100 rounded text-gray-700 max-h-32 overflow-y-auto">
+          <div className="mt-4 text-sm text-gray-600 dark:text-gray-400">
+            <h4 className="font-semibold">Debug Info:</h4>
+            <ul className="list-disc list-inside text-xs">
               {debugInfo.map((info, index) => (
-                <div key={index}>{info}</div>
+                <li key={index}>{info}</li>
               ))}
-            </div>
-          </details>
-        )}
-      </CardContent>
-    </Card>
+            </ul>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
