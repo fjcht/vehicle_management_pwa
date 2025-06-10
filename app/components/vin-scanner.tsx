@@ -35,66 +35,93 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
   const [isOcrProcessing, setIsOcrProcessing] = useState(false)
   const [scanStatus, setScanStatus] = useState<string>('Ready to scan')
 
-  // Configuración mejorada de hints
+  // Configuración mejorada de hints - MÁS FORMATOS
   const hints = React.useMemo(() => {
     const hintsMap = new Map<DecodeHintType, any>()
     
-    // Formatos de código de barras más comunes para VIN
+    // Todos los formatos de código de barras posibles
     hintsMap.set(DecodeHintType.POSSIBLE_FORMATS, [
       BarcodeFormat.QR_CODE,
       BarcodeFormat.CODE_128,
       BarcodeFormat.CODE_39,
+      BarcodeFormat.CODE_93,
+      BarcodeFormat.EAN_13,
+      BarcodeFormat.EAN_8,
+      BarcodeFormat.UPC_A,
+      BarcodeFormat.UPC_E,
       BarcodeFormat.DATA_MATRIX,
       BarcodeFormat.PDF_417,
-      BarcodeFormat.AZTEC
+      BarcodeFormat.AZTEC,
+      BarcodeFormat.CODABAR,
+      BarcodeFormat.ITF,
+      BarcodeFormat.RSS_14,
+      BarcodeFormat.RSS_EXPANDED
     ])
     
     // Configuración más permisiva
     hintsMap.set(DecodeHintType.TRY_HARDER, true)
     hintsMap.set(DecodeHintType.PURE_BARCODE, false)
+    hintsMap.set(DecodeHintType.ALSO_INVERTED, true)
     
     return hintsMap
   }, [])
 
-  // Validar VIN mejorado
+  // Validar VIN más permisivo
   const isValidVin = useCallback((vin: string): boolean => {
     const cleanVin = vin.toUpperCase().replace(/[^0-9A-Z]/g, '')
     
     // Verificar longitud
     if (cleanVin.length !== 17) return false
     
-    // Verificar caracteres válidos (sin I, O, Q)
-    if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(cleanVin)) return false
-    
-    // Verificar que no sea todo números o todo letras
+    // Verificar que tenga al menos números y letras (más permisivo)
     const hasNumbers = /\d/.test(cleanVin)
     const hasLetters = /[A-Z]/.test(cleanVin)
     
-    return hasNumbers && hasLetters
+    // Verificar que no sea una secuencia repetitiva obvia
+    const isRepeating = /^(.)\1{16}$/.test(cleanVin) || /^(..)\1{8}$/.test(cleanVin)
+    
+    return hasNumbers && hasLetters && !isRepeating
   }, [])
 
-  // Extraer VIN de texto mejorado
+  // Extraer VIN de texto mejorado - MÁS PERMISIVO
   const extractVinFromText = useCallback((text: string): string | null => {
     console.log('[VIN Scanner] Raw text:', text)
     
-    // Limpiar texto pero mantener más caracteres
-    const cleanText = text.toUpperCase().replace(/[^A-Z0-9\s\-_]/g, ' ')
+    // Limpieza menos agresiva
+    const cleanText = text.toUpperCase().replace(/[^A-Z0-9\s\-_\.]/g, ' ')
     
-    // Buscar patrones de VIN (17 caracteres alfanuméricos)
+    // Patrones de VIN más amplios
     const vinPatterns = [
-      /\b[A-HJ-NPR-Z0-9]{17}\b/g,           // VIN completo
-      /\b[A-HJ-NPR-Z0-9]{3}[\s\-_]?[A-HJ-NPR-Z0-9]{2}[\s\-_]?[A-HJ-NPR-Z0-9]{12}\b/g, // Con separadores
-      /[A-HJ-NPR-Z0-9]{17}/g                // Sin límites de palabra
+      /\b[A-Z0-9]{17}\b/g,    // VIN completo con límites de palabra
+      /[A-Z0-9]{17}/g,        // VIN completo sin límites
+      /\b[A-Z0-9]{3}[\s\-_]?[A-Z0-9]{2}[\s\-_]?[A-Z0-9]{12}\b/g, // Con separadores
+      /[A-Z0-9]{3}[\s\-_\.]{1,2}[A-Z0-9]{2}[\s\-_\.]{1,2}[A-Z0-9]{12}/g, // Más separadores
+      /[A-Z0-9]{5}[\s\-_\.]{1,2}[A-Z0-9]{12}/g, // Formato alternativo
     ]
     
     for (const pattern of vinPatterns) {
       const matches = cleanText.match(pattern)
       if (matches) {
         for (const match of matches) {
-          const cleanMatch = match.replace(/[\s\-_]/g, '')
+          const cleanMatch = match.replace(/[\s\-_\.]/g, '')
+          console.log('[VIN Scanner] Testing potential VIN:', cleanMatch)
           if (isValidVin(cleanMatch)) {
             console.log('[VIN Scanner] Valid VIN found:', cleanMatch)
             return cleanMatch
+          }
+        }
+      }
+    }
+    
+    // Búsqueda adicional: dividir por espacios y buscar secuencias de 17 caracteres
+    const words = cleanText.split(/\s+/)
+    for (const word of words) {
+      if (word.length >= 17) {
+        for (let i = 0; i <= word.length - 17; i++) {
+          const candidate = word.substring(i, i + 17)
+          if (isValidVin(candidate)) {
+            console.log('[VIN Scanner] Valid VIN found in word:', candidate)
+            return candidate
           }
         }
       }
@@ -153,7 +180,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     }
   }, [cleanup])
 
-  // OCR Processing mejorado - MARCOS MÁS PEQUEÑOS
+  // OCR Processing mejorado - CONFIGURACIÓN OPTIMIZADA
   const processOCR = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current || !isMountedRef.current) return
 
@@ -174,9 +201,9 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
       // Capturar frame del video
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-      // ÁREA DE RECORTE MUCHO MÁS PEQUEÑA - SOLO PARA VIN
-      const cropX = canvas.width * 0.05      // 5% margen izquierdo
-      const cropY = canvas.height * 0.44     // Centrado verticalmente
+      // ÁREA DE RECORTE - MANTENER COMO ESTÁ
+      const cropX = canvas.width * 0.05    // 5% margen izquierdo
+      const cropY = canvas.height * 0.44    // Centrado verticalmente
       const cropWidth = canvas.width * 0.9   // 90% del ancho
       const cropHeight = canvas.height * 0.12 // SOLO 12% del alto - MUY DELGADO
 
@@ -195,28 +222,29 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
         0, 0, cropWidth, cropHeight
       )
 
-      // Mejorar contraste
+      // Mejorar contraste y nitidez
       const imageData = croppedCtx.getImageData(0, 0, cropWidth, cropHeight)
       const data = imageData.data
       
       for (let i = 0; i < data.length; i += 4) {
         // Convertir a escala de grises y aumentar contraste
         const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
-        const contrast = Math.min(255, Math.max(0, (gray - 128) * 1.5 + 128))
+        const contrast = Math.min(255, Math.max(0, (gray - 128) * 2.0 + 128)) // Más contraste
         data[i] = data[i + 1] = data[i + 2] = contrast
       }
       
       croppedCtx.putImageData(imageData, 0, 0)
 
-      // Procesar con Tesseract - configuración optimizada para VIN
+      // Procesar con Tesseract - configuración MÁS PERMISIVA
       const { data: { text } } = await Tesseract.recognize(
         croppedCanvas,
         'eng',
         {
           logger: () => {}, // Silenciar logs
-          tessedit_char_whitelist: 'ABCDEFGHJKLMNPRSTUVWXYZ0123456789',
-          tessedit_pageseg_mode: Tesseract.PSM.SINGLE_TEXT_LINE, // Optimizado para una línea
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', // TODAS las letras
+          tessedit_pageseg_mode: Tesseract.PSM.SINGLE_TEXT_LINE,
           tessedit_ocr_engine_mode: Tesseract.OEM.LSTM_ONLY,
+          preserve_interword_spaces: '1',
         }
       )
 
@@ -250,7 +278,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     }
   }, [extractVinFromText, onVinDetected, stopScanning])
 
-  // Barcode scanning mejorado
+  // Barcode scanning mejorado - MÁS PERMISIVO
   const processBarcodeScanning = useCallback(async (deviceId: string) => {
     if (!videoRef.current || !readerRef.current || !isMountedRef.current) return
 
@@ -265,7 +293,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
             const rawText = result.getText()
             console.log('[VIN Scanner] Barcode raw text:', rawText)
             
-            // Buscar VIN en el texto del código de barras
+            // Buscar VIN directamente en el texto del código de barras
             const detectedVin = extractVinFromText(rawText)
 
             if (detectedVin) {
@@ -276,6 +304,16 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
               setTimeout(stopScanning, 1000)
               return
             } else {
+              // Si no es VIN válido, verificar si es texto alfanumérico de 17 caracteres
+              const cleanBarcode = rawText.toUpperCase().replace(/[^A-Z0-9]/g, '')
+              if (cleanBarcode.length === 17) {
+                console.log('[VIN Scanner] Potential VIN from barcode (relaxed):', cleanBarcode)
+                setScanResult(cleanBarcode)
+                setScanStatus(`Potential VIN: ${cleanBarcode}`)
+                onVinDetected(cleanBarcode)
+                setTimeout(stopScanning, 1000)
+                return
+              }
               console.log('[VIN Scanner] Barcode text not a valid VIN:', rawText)
             }
           }
@@ -343,22 +381,22 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
       if (isMountedRef.current) {
         setIsCameraReady(true)
         setScanStatus(scanMode === 'barcode' ? 'Scanning for barcodes...' : 
-                    scanMode === 'ocr' ? 'Ready for text recognition...' : 
-                    'Scanning for barcodes and text...')
+          scanMode === 'ocr' ? 'Ready for text recognition...' : 
+          'Scanning for barcodes and text...')
       }
 
       // Configurar scanning según el modo
       if (scanMode === 'ocr') {
         // Solo OCR
-        scanIntervalRef.current = setInterval(processOCR, 1500) // Más frecuente
+        scanIntervalRef.current = setInterval(processOCR, 1000) // Más frecuente
       } else if (scanMode === 'auto') {
-        // Auto: Barcode primero, luego OCR después de 2 segundos
+        // Auto: Barcode primero, luego OCR después de 1.5 segundos
         ocrTimeoutRef.current = setTimeout(() => {
           if (isMountedRef.current && isScanningActive && !scanResult) {
             setScanStatus('Switching to text recognition...')
-            scanIntervalRef.current = setInterval(processOCR, 1500)
+            scanIntervalRef.current = setInterval(processOCR, 1000)
           }
-        }, 2000)
+        }, 1500) // Reducido de 2000 a 1500
       }
       // Para 'barcode' mode, solo usa el callback del BrowserMultiFormatReader
 
@@ -654,8 +692,8 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
                 <div 
                   className="border-2 border-orange-400 rounded-lg bg-transparent"
                   style={{
-                    width: '90%',      // Ancho: 90%
-                    height: '12%',     // Alto: SOLO 12% - MUY DELGADO
+                    width: '90%',    // Ancho: 90%
+                    height: '12%',    // Alto: SOLO 12% - MUY DELGADO
                     boxShadow: '0 0 0 9999px rgba(0,0,0,0.3)'
                   }}
                 >
