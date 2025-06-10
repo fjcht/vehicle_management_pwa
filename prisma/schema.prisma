@@ -65,7 +65,7 @@ model Session {
 model User {
   id    String    @id @default(cuid())
   name    String?
-  email    String    @unique
+  email    String
   emailVerified DateTime?
   image    String?
   password    String?
@@ -83,6 +83,7 @@ model User {
   repairOrders    RepairOrder[] @relation("AssignedEmployee")
   repairLogs    RepairLog[]
 
+  @@unique([email, companyId])
   @@map("users")
 }
 
@@ -122,7 +123,7 @@ model Client {
 
 model Vehicle {
   id    String   @id @default(cuid())
-  vin    String?  @unique
+  vin    String?
   licensePlate    String
   make    String?
   model    String?
@@ -146,6 +147,7 @@ model Vehicle {
   repairOrders RepairOrder[]
   appointments Appointment[]
 
+  @@unique([vin, companyId])
   @@map("vehicles")
 }
 
