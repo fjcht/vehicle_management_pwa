@@ -165,10 +165,13 @@ export function SmartVinInput({ onVehicleDataFound, initialVin = '', disabled = 
     }
   }
 
-  const handleScanResult = (scannedVin: string) => {
-    console.log(`[SmartVinInput] Scanned VIN: ${scannedVin}`)
+  // ✅ FUNCIÓN CORREGIDA - Nombre correcto de la prop
+  const handleVinDetected = (scannedVin: string) => {
+    console.log(`[SmartVinInput] 🔍 VIN detected from scanner: ${scannedVin}`)
     setVin(scannedVin.toUpperCase())
     setShowScanner(false)
+    
+    console.log(`[SmartVinInput] 🔍 About to auto-search VIN: ${scannedVin}`)
     // Auto-search después de escanear
     setTimeout(() => {
       searchVin(scannedVin)
@@ -233,13 +236,13 @@ export function SmartVinInput({ onVehicleDataFound, initialVin = '', disabled = 
           </Button>
         </div>
 
-        {/* Scanner Component */}
+        {/* Scanner Component - ✅ PROP CORREGIDA */}
         {showScanner && (
           <div className="border rounded-lg p-4">
             <VinScanner
-              onScanResult={handleScanResult}
+              onVinDetected={handleVinDetected}  {/* ✅ Nombre correcto */}
               onError={(error) => {
-                console.error('Scanner error:', error)
+                console.error('[SmartVinInput] Scanner error:', error)
                 toast({
                   title: "Scanner Error",
                   description: error,
