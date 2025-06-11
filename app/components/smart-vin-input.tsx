@@ -165,7 +165,6 @@ export function SmartVinInput({ onVehicleDataFound, initialVin = '', disabled = 
     }
   }
 
-  // ✅ FUNCIÓN CORREGIDA - Nombre correcto de la prop
   const handleVinDetected = (scannedVin: string) => {
     console.log(`[SmartVinInput] 🔍 VIN detected from scanner: ${scannedVin}`)
     setVin(scannedVin.toUpperCase())
@@ -236,11 +235,11 @@ export function SmartVinInput({ onVehicleDataFound, initialVin = '', disabled = 
           </Button>
         </div>
 
-        {/* Scanner Component - ✅ PROP CORREGIDA */}
+        {/* Scanner Component */}
         {showScanner && (
           <div className="border rounded-lg p-4">
             <VinScanner
-              onVinDetected={handleVinDetected}  {/* ✅ Nombre correcto */}
+              onVinDetected={handleVinDetected}
               onError={(error) => {
                 console.error('[SmartVinInput] Scanner error:', error)
                 toast({
