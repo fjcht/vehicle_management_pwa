@@ -25,7 +25,7 @@ model Company {
   repairOrders  RepairOrder[]
   appointments  Appointment[]
 
-  @@map("Companies")
+  @@map("companies")
 }
 
 // NextAuth.js required models
@@ -46,7 +46,7 @@ model Account {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
-  @@map("Accounts")
+  @@map("accounts")
 }
 
 model Session {
@@ -81,7 +81,7 @@ model User {
   repairOrders      RepairOrder[] @relation("AssignedEmployee")
   repairLogs        RepairLog[]
 
-  @@map("Users")
+  @@map("users")
 }
 
 model VerificationToken {
@@ -117,7 +117,7 @@ model Client {
 
   @@unique([email, companyId])
   @@unique([phone, companyId])
-  @@map("Clients")
+  @@map("clients")
 }
 
 model Vehicle {
@@ -147,7 +147,7 @@ model Vehicle {
   appointments  Appointment[]
 
   @@unique([vin, companyId])
-  @@map("Vehicles")
+  @@map("vehicles")
 }
 
 model RepairOrder {
@@ -179,7 +179,7 @@ model RepairOrder {
   logs         RepairLog[]
 
   @@unique([orderNumber, companyId])
-  @@map("RepaiOrders")
+  @@map("repair_orders")
 }
 
 model RepairLog {
