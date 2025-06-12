@@ -181,102 +181,113 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
   }, [cleanup])
 
   // OCR Processing mejorado - CONFIGURACIÓN OPTIMIZADA
-  const processOCR = useCallback(async () => {
-    if (!videoRef.current || !canvasRef.current || !isMountedRef.current) return
+  // OCR Processing mejorado - CONFIGURACIÓN OPTIMIZADA CON LOGS
 
-    try {
-      setIsOcrProcessing(true)
-      setScanStatus('Processing text recognition...')
+const processOCR = useCallback(async () => {
+  if (!videoRef.current || !canvasRef.current || !isMountedRef.current) return;
 
-      const canvas = canvasRef.current
-      const video = videoRef.current
-      const ctx = canvas.getContext('2d')
+  try {
+    setIsOcrProcessing(true);
+    setScanStatus('Processing text recognition...');
 
-      if (!ctx) return
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    const ctx = canvas.getContext('2d');
 
-      // Configurar canvas con las dimensiones del video
-      canvas.width = video.videoWidth
-      canvas.height = video.videoHeight
+    if (!ctx) return;
 
-      // Capturar frame del video
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    // Configurar canvas con las dimensiones del video
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
 
-      // ÁREA DE RECORTE - MANTENER COMO ESTÁ
-      const cropX = canvas.width * 0.05    // 5% margen izquierdo
-      const cropY = canvas.height * 0.44    // Centrado verticalmente
-      const cropWidth = canvas.width * 0.9   // 90% del ancho
-      const cropHeight = canvas.height * 0.12 // SOLO 12% del alto - MUY DELGADO
+    // Capturar frame del video
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      // Crear canvas recortado
-      const croppedCanvas = document.createElement('canvas')
-      const croppedCtx = croppedCanvas.getContext('2d')
+    // ÁREA DE RECORTE - MANTENER COMO ESTÁ
+    const cropX = canvas.width * 0.05;
+    const cropY = canvas.height * 0.44;
+    const cropWidth = canvas.width * 0.9;
+    const cropHeight = canvas.height * 0.12;
 
-      if (!croppedCtx) return
+    // Crear canvas recortado
+    const croppedCanvas = document.createElement('canvas');
+    const croppedCtx = croppedCanvas.getContext('2d');
 
-      croppedCanvas.width = cropWidth
-      croppedCanvas.height = cropHeight
+    if (!croppedCtx) return;
 
-      croppedCtx.drawImage(
-        canvas, 
-        cropX, cropY, cropWidth, cropHeight,
-        0, 0, cropWidth, cropHeight
-      )
+    croppedCanvas.width = cropWidth;
+    croppedCanvas.height = cropHeight;
 
-      // Mejorar contraste y nitidez
-      const imageData = croppedCtx.getImageData(0, 0, cropWidth, cropHeight)
-      const data = imageData.data
-      
-      for (let i = 0; i < data.length; i += 4) {
-        // Convertir a escala de grises y aumentar contraste
-        const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
-        const contrast = Math.min(255, Math.max(0, (gray - 128) * 2.0 + 128)) // Más contraste
-        data[i] = data[i + 1] = data[i + 2] = contrast
-      }
-      
-      croppedCtx.putImageData(imageData, 0, 0)
+    croppedCtx.drawImage(
+      canvas,
+      cropX, cropY, cropWidth, cropHeight,
+      0, 0, cropWidth, cropHeight
+    );
 
-      // Procesar con Tesseract - configuración MÁS PERMISIVA
-      const { data: { text } } = await Tesseract.recognize(
-        croppedCanvas,
-        'eng',
-        {
-          logger: () => {}, // Silenciar logs
-          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', // TODAS las letras
-          tessedit_pageseg_mode: Tesseract.PSM.SINGLE_TEXT_LINE,
-          tessedit_ocr_engine_mode: Tesseract.OEM.LSTM_ONLY,
-          preserve_interword_spaces: '1',
-        }
-      )
+    // Mejorar contraste y nitidez
+    const imageData = croppedCtx.getImageData(0, 0, cropWidth, cropHeight);
+    const data = imageData.data;
 
-      if (!isMountedRef.current) return
-
-      console.log('[VIN Scanner] OCR text result:', text)
-
-      // Buscar VIN en el texto
-      const detectedVin = extractVinFromText(text)
-
-      if (detectedVin) {
-        console.log('[VIN Scanner] VIN detected via OCR:', detectedVin)
-        setScanResult(detectedVin)
-        setScanStatus(`VIN detected: ${detectedVin}`)
-        onVinDetected(detectedVin)
-        setTimeout(stopScanning, 1000)
-        return
-      }
-
-      setScanStatus('Scanning for text...')
-
-    } catch (error: any) {
-      console.error('[VIN Scanner] OCR error:', error)
-      if (isMountedRef.current) {
-        setScanStatus('OCR processing failed')
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setIsOcrProcessing(false)
-      }
+    for (let i = 0; i < data.length; i += 4) {
+      const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+      const contrast = Math.min(255, Math.max(0, (gray - 128) * 2.0 + 128));
+      data[i] = data[i + 1] = data[i + 2] = contrast;
     }
-  }, [extractVinFromText, onVinDetected, stopScanning])
+
+    croppedCtx.putImageData(imageData, 0, 0);
+
+    // INICIO DEL OCR CON LOGS DETALLADOS
+    console.log('[VIN Scanner] 🧪 Enviando imagen a Tesseract para OCR...');
+
+    const ocrResult = await Tesseract.recognize(
+      croppedCanvas,
+      'eng',
+      {
+        logger: m => console.log('[Tesseract log]', m),
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+        tessedit_pageseg_mode: Tesseract.PSM.SINGLE_TEXT_LINE,
+        tessedit_ocr_engine_mode: Tesseract.OEM.LSTM_ONLY,
+        preserve_interword_spaces: '1',
+      }
+    );
+
+    if (!isMountedRef.current) return;
+
+    const text = ocrResult.data.text;
+
+    console.log('[VIN Scanner] OCR text result:', JSON.stringify(text));
+
+    if (!text || !text.trim()) {
+      console.warn('[VIN Scanner] ❌ OCR no devolvió texto.');
+    } else {
+      console.info('[VIN Scanner] 🧾 OCR devolvió texto crudo:', text);
+    }
+
+    // Buscar VIN en el texto
+    const detectedVin = extractVinFromText(text);
+
+    if (detectedVin) {
+      console.log('[VIN Scanner] VIN detected via OCR:', detectedVin);
+      setScanResult(detectedVin);
+      setScanStatus(`VIN detected: ${detectedVin}`);
+      onVinDetected(detectedVin);
+      setTimeout(stopScanning, 1000);
+      return;
+    }
+
+    setScanStatus('Scanning for text...');
+  } catch (error: any) {
+    console.error('[VIN Scanner] OCR error:', error);
+    if (isMountedRef.current) {
+      setScanStatus('OCR processing failed');
+    }
+  } finally {
+    if (isMountedRef.current) {
+      setIsOcrProcessing(false);
+    }
+  }
+}, [extractVinFromText, onVinDetected, stopScanning]);
+
 
   // Barcode scanning mejorado - MÁS PERMISIVO
   const processBarcodeScanning = useCallback(async (deviceId: string) => {

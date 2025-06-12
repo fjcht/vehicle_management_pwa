@@ -178,20 +178,22 @@ export function SmartVinInput({ onVehicleDataFound, initialVin = '', disabled = 
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center space-x-2">
+    <div className="bg-white shadow-lg rounded-lg border border-gray-200">
+      <div className="p-6 border-b border-gray-200">
+        <div className="flex items-center space-x-2 mb-2">
           <Search className="w-5 h-5" />
-          <span>VIN Lookup</span>
-        </CardTitle>
-        <CardDescription>
+          <h3 className="text-lg font-semibold">VIN Lookup</h3>
+        </div>
+        <p className="text-sm text-gray-600">
           Enter or scan a VIN to search for vehicle information
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+        </p>
+      </div>
+      <div className="p-6 space-y-4">
         {/* VIN Input */}
         <div className="space-y-2">
-          <Label htmlFor="vin-input">Vehicle Identification Number (VIN)</Label>
+          <label htmlFor="vin-input" className="text-sm font-medium text-gray-700">
+            Vehicle Identification Number (VIN)
+          </label>
           <div className="flex space-x-2">
             <div className="flex-1 relative">
               <Input
@@ -256,30 +258,36 @@ export function SmartVinInput({ onVehicleDataFound, initialVin = '', disabled = 
         {searchResult && (
           <div className="space-y-2">
             {searchResult.found ? (
-              <Alert className="border-green-200 bg-green-50">
-                <CheckCircle className="w-4 h-4" />
-                <AlertDescription>
-                  <strong>Vehicle Found!</strong> {searchResult.message}
-                  {searchResult.data?.client && (
-                    <div className="mt-1">
-                      Owner: <strong>{searchResult.data.client.name}</strong>
-                    </div>
-                  )}
-                </AlertDescription>
-              </Alert>
+              <div className="border border-green-200 bg-green-50 rounded-lg p-4">
+                <div className="flex items-start space-x-2">
+                  <CheckCircle className="w-4 h-4 text-green-600 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-green-800">
+                      <strong>Vehicle Found!</strong> {searchResult.message}
+                    </p>
+                    {searchResult.data?.client && (
+                      <p className="text-sm text-green-700 mt-1">
+                        Owner: <strong>{searchResult.data.client.name}</strong>
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
             ) : searchResult.data ? (
-              <Alert className="border-blue-200 bg-blue-50">
-                <AlertDescription>
+              <div className="border border-blue-200 bg-blue-50 rounded-lg p-4">
+                <p className="text-sm text-blue-800">
                   <strong>New Vehicle</strong> - {searchResult.message}
-                </AlertDescription>
-              </Alert>
+                </p>
+              </div>
             ) : (
-              <Alert className="border-yellow-200 bg-yellow-50">
-                <AlertTriangle className="w-4 h-4" />
-                <AlertDescription>
-                  <strong>No Information Found</strong> - {searchResult.message}
-                </AlertDescription>
-              </Alert>
+              <div className="border border-yellow-200 bg-yellow-50 rounded-lg p-4">
+                <div className="flex items-start space-x-2">
+                  <AlertTriangle className="w-4 h-4 text-yellow-600 mt-0.5" />
+                  <p className="text-sm text-yellow-800">
+                    <strong>No Information Found</strong> - {searchResult.message}
+                  </p>
+                </div>
+              </div>
             )}
           </div>
         )}
@@ -292,14 +300,16 @@ export function SmartVinInput({ onVehicleDataFound, initialVin = '', disabled = 
         )}
 
         {vin && vin.length === 17 && !validateVin(vin) && (
-          <Alert className="border-red-200 bg-red-50">
-            <AlertTriangle className="w-4 h-4" />
-            <AlertDescription>
-              Invalid VIN format. VIN cannot contain the letters I, O, or Q.
-            </AlertDescription>
-          </Alert>
+          <div className="border border-red-200 bg-red-50 rounded-lg p-4">
+            <div className="flex items-start space-x-2">
+              <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5" />
+              <p className="text-sm text-red-800">
+                Invalid VIN format. VIN cannot contain the letters I, O, or Q.
+              </p>
+            </div>
+          </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }

@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/app/lib/auth'
@@ -9,7 +8,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    
+
     if (!session?.user?.companyId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -59,7 +58,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-    
+
     if (!session?.user?.companyId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -150,11 +149,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Generate order number
-    const orderCount = await prisma.repairOrder.count({
-      where: { companyId: session.user.companyId }
+    // Generate order number in a safe way
+    const lastOrder = await prisma.repairOrder.findFirst({
+      where: { companyId: session.user.companyId },
+      orderBy: { id: 'desc' },
+      select: { orderNumber: true }
     })
-    const orderNumber = `RO-${String(orderCount + 1).padStart(6, '0')}`
+
+    let nextNumber = 1
+
+    if (lastOrder?.orderNumber) {
+      const match = lastOrder.orderNumber.match(/RO-(\d+)/)
+      if (match) {
+        nextNumber = parseInt(match[1]) + 1
+      }
+    }
+
+    const orderNumber = `RO-${String(nextNumber).padStart(6, '0')}`
 
     console.log('Creating repair order with data:', {
       orderNumber,
