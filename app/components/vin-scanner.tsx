@@ -160,96 +160,95 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
 
   // Improved OCR with binarization and showing cropped canvas for debug
   const processOCR = useCallback(async () => {
-    if (!videoRef.current || !canvasRef.current || !isMountedRef.current) return
-    try {
-      setIsOcrProcessing(true)
-      setScanStatus('Processing text recognition...')
-      const canvas = canvasRef.current
-      const video = videoRef.current
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-      canvas.width = video.videoWidth
-      canvas.height = video.videoHeight
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+  if (!videoRef.current || !canvasRef.current || !isMountedRef.current) return
+  try {
+    setIsOcrProcessing(true)
+    setScanStatus('Processing text recognition...')
+    const canvas = canvasRef.current
+    const video = videoRef.current
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
 
-      // Adjusted crop area for VIN (tune these values as needed)
-      const cropX = canvas.width * 0.05
-      const cropY = canvas.height * 0.44
-      const cropWidth = canvas.width * 0.9
-      const cropHeight = canvas.height * 0.12
+    // Ajuste para que el recorte esté centrado verticalmente y coincida con el marco visible
+    const cropX = canvas.width * 0.05
+    const cropWidth = canvas.width * 0.9
+    const cropHeight = canvas.height * 0.12
+    const cropY = (canvas.height - cropHeight) / 2
 
-      const croppedCanvas = document.createElement('canvas')
-      const croppedCtx = croppedCanvas.getContext('2d')
-      if (!croppedCtx) return
-      croppedCanvas.width = cropWidth
-      croppedCanvas.height = cropHeight
-      croppedCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight)
+    const croppedCanvas = document.createElement('canvas')
+    const croppedCtx = croppedCanvas.getContext('2d')
+    if (!croppedCtx) return
+    croppedCanvas.width = cropWidth
+    croppedCanvas.height = cropHeight
+    croppedCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight)
 
-      // Preprocessing: simple binarization for better OCR
-      const imageData = croppedCtx.getImageData(0, 0, cropWidth, cropHeight)
-      const data = imageData.data
-      for (let i = 0; i < data.length; i += 4) {
-        const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
-        const threshold = 128
-        const binarized = gray > threshold ? 255 : 0
-        data[i] = data[i + 1] = data[i + 2] = binarized
-      }
-      croppedCtx.putImageData(imageData, 0, 0)
+    // Preprocesamiento: binarización simple para mejorar OCR
+    const imageData = croppedCtx.getImageData(0, 0, cropWidth, cropHeight)
+    const data = imageData.data
+    for (let i = 0; i < data.length; i += 4) {
+      const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
+      const threshold = 128
+      const binarized = gray > threshold ? 255 : 0
+      data[i] = data[i + 1] = data[i + 2] = binarized
+    }
+    croppedCtx.putImageData(imageData, 0, 0)
 
-      // For debugging: show cropped canvas on screen
-      const debugCanvas = document.getElementById('vin-ocr-debug-canvas') as HTMLCanvasElement | null
-      if (debugCanvas) {
-        const debugCtx = debugCanvas.getContext('2d')
-        if (debugCtx) {
-          debugCanvas.width = cropWidth
-          debugCanvas.height = cropHeight
-          debugCtx.clearRect(0, 0, cropWidth, cropHeight)
-          debugCtx.drawImage(croppedCanvas, 0, 0)
-        }
-      }
-
-      console.log('[VIN Scanner] 🧪 Sending image to Tesseract for OCR...')
-      const ocrResult = await Tesseract.recognize(
-        croppedCanvas,
-        'eng',
-        {
-          logger: m => console.log('[Tesseract log]', m),
-          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-          // Use single line mode for VIN
-          psm: Tesseract.PSM.SINGLE_LINE,
-          oem: Tesseract.OEM.LSTM_ONLY,
-          preserve_interword_spaces: '1',
-        }
-      )
-      if (!isMountedRef.current) return
-      const text = ocrResult.data.text
-      console.log('[VIN Scanner] OCR text result:', JSON.stringify(text))
-      if (!text || !text.trim()) {
-        console.warn('[VIN Scanner] ❌ OCR returned empty text.')
-      } else {
-        console.info('[VIN Scanner] 🧾 OCR raw text:', text)
-      }
-      const detectedVin = extractVinFromText(text)
-      if (detectedVin) {
-        console.log('[VIN Scanner] VIN detected via OCR:', detectedVin)
-        setScanResult(detectedVin)
-        setScanStatus(`VIN detected: ${detectedVin}`)
-        onVinDetected(detectedVin)
-        setTimeout(stopScanning, 1000)
-        return
-      }
-      setScanStatus('Scanning for text...')
-    } catch (error: any) {
-      console.error('[VIN Scanner] OCR error:', error)
-      if (isMountedRef.current) {
-        setScanStatus('OCR processing failed')
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setIsOcrProcessing(false)
+    // Mostrar canvas recortado para debug
+    const debugCanvas = document.getElementById('vin-ocr-debug-canvas') as HTMLCanvasElement | null
+    if (debugCanvas) {
+      const debugCtx = debugCanvas.getContext('2d')
+      if (debugCtx) {
+        debugCanvas.width = cropWidth
+        debugCanvas.height = cropHeight
+        debugCtx.clearRect(0, 0, cropWidth, cropHeight)
+        debugCtx.drawImage(croppedCanvas, 0, 0)
       }
     }
-  }, [extractVinFromText, onVinDetected, stopScanning])
+
+    console.log('[VIN Scanner] 🧪 Sending image to Tesseract for OCR...')
+    const ocrResult = await Tesseract.recognize(
+      croppedCanvas,
+      'eng',
+      {
+        logger: m => console.log('[Tesseract log]', m),
+        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+        psm: Tesseract.PSM.SINGLE_LINE,
+        oem: Tesseract.OEM.LSTM_ONLY,
+        preserve_interword_spaces: '1',
+      }
+    )
+    if (!isMountedRef.current) return
+    const text = ocrResult.data.text
+    console.log('[VIN Scanner] OCR text result:', JSON.stringify(text))
+    if (!text || !text.trim()) {
+      console.warn('[VIN Scanner] ❌ OCR returned empty text.')
+    } else {
+      console.info('[VIN Scanner] 🧾 OCR raw text:', text)
+    }
+    const detectedVin = extractVinFromText(text)
+    if (detectedVin) {
+      console.log('[VIN Scanner] VIN detected via OCR:', detectedVin)
+      setScanResult(detectedVin)
+      setScanStatus(`VIN detected: ${detectedVin}`)
+      onVinDetected(detectedVin)
+      setTimeout(stopScanning, 1000)
+      return
+    }
+    setScanStatus('Scanning for text...')
+  } catch (error: any) {
+    console.error('[VIN Scanner] OCR error:', error)
+    if (isMountedRef.current) {
+      setScanStatus('OCR processing failed')
+    }
+  } finally {
+    if (isMountedRef.current) {
+      setIsOcrProcessing(false)
+    }
+  }
+}, [extractVinFromText, onVinDetected, stopScanning])
 
   // Barcode scanning disabled for now to avoid errors, but code kept for future
   const processBarcodeScanning = useCallback(async (deviceId: string) => {
