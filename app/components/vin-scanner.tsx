@@ -3,11 +3,12 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { BrowserMultiFormatReader, DecodeHintType, Result, BarcodeFormat } from '@zxing/library'
 import Tesseract from 'tesseract.js'
-import { AlertTriangle, CheckCircle, Loader2, CameraOff, Video, StopCircle, Play, QrCode, Type, Zap } from 'lucide-react'
+import { Alert, AlertDescription, AlertTitle } from '@/app/components/ui/alert'
+import { Loader2, CameraOff, Video, AlertTriangle, CheckCircle, XCircle, Play, StopCircle, QrCode, Type, Zap } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select'
 import { Label } from '@/app/components/ui/label'
 import { Button } from '@/app/components/ui/button'
-import { Tabs, TabsList, TabsTrigger } from '@/app/components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/app/components/ui/tabs'
 
 interface VinScannerProps {
   onVinDetected: (vin: string) => void
@@ -30,12 +31,11 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('')
   const [scanResult, setScanResult] = useState<string | null>(null)
   const [isScanningActive, setIsScanningActive] = useState(false)
-  // Forcing OCR mode for better reliability
-  const [scanMode, setScanMode] = useState<ScanMode>('ocr')
+  const [scanMode, setScanMode] = useState<ScanMode>('auto')
   const [isOcrProcessing, setIsOcrProcessing] = useState(false)
   const [scanStatus, setScanStatus] = useState<string>('Ready to scan')
 
-  // Hints for barcode reader (kept for future use)
+  // Mejor configuración de hints para lector de códigos de barras
   const hints = React.useMemo(() => {
     const hintsMap = new Map<DecodeHintType, any>()
     hintsMap.set(DecodeHintType.POSSIBLE_FORMATS, [
@@ -61,27 +61,26 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     return hintsMap
   }, [])
 
-  // VIN validation: 17 chars, allowed chars, no repeats
+  // Validación más permisiva y robusta para VIN
   const isValidVin = useCallback((vin: string): boolean => {
     const cleanVin = vin.toUpperCase().replace(/[^0-9A-Z]/g, '')
     if (cleanVin.length !== 17) return false
-    if (/[^A-HJ-NPR-Z0-9]/.test(cleanVin)) return false // Exclude I, O, Q
     const hasNumbers = /\d/.test(cleanVin)
     const hasLetters = /[A-Z]/.test(cleanVin)
     const isRepeating = /^(.)\1{16}$/.test(cleanVin) || /^(..)\1{8}$/.test(cleanVin)
     return hasNumbers && hasLetters && !isRepeating
   }, [])
 
-  // Extract VIN from OCR text with flexible patterns
+  // Extraer VIN del texto OCR con patrones más flexibles
   const extractVinFromText = useCallback((text: string): string | null => {
     console.log('[VIN Scanner] Raw text:', text)
     const cleanText = text.toUpperCase().replace(/[^A-Z0-9\s\-_\.]/g, ' ')
     const vinPatterns = [
-      /\b[A-HJ-NPR-Z0-9]{17}\b/g,
-      /[A-HJ-NPR-Z0-9]{17}/g,
-      /\b[A-HJ-NPR-Z0-9]{3}[\s\-_]?[A-HJ-NPR-Z0-9]{2}[\s\-_]?[A-HJ-NPR-Z0-9]{12}\b/g,
-      /[A-HJ-NPR-Z0-9]{3}[\s\-_\.]{1,2}[A-HJ-NPR-Z0-9]{2}[\s\-_\.]{1,2}[A-HJ-NPR-Z0-9]{12}/g,
-      /[A-HJ-NPR-Z0-9]{5}[\s\-_\.]{1,2}[A-HJ-NPR-Z0-9]{12}/g,
+      /\b[A-Z0-9]{17}\b/g,
+      /[A-Z0-9]{17}/g,
+      /\b[A-Z0-9]{3}[\s\-_]?[A-Z0-9]{2}[\s\-_]?[A-Z0-9]{12}\b/g,
+      /[A-Z0-9]{3}[\s\-_\.]{1,2}[A-Z0-9]{2}[\s\-_\.]{1,2}[A-Z0-9]{12}/g,
+      /[A-Z0-9]{5}[\s\-_\.]{1,2}[A-Z0-9]{12}/g,
     ]
     for (const pattern of vinPatterns) {
       const matches = cleanText.match(pattern)
@@ -96,7 +95,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
         }
       }
     }
-    // Additional search in long words
+    // Búsqueda adicional en palabras largas
     const words = cleanText.split(/\s+/)
     for (const word of words) {
       if (word.length >= 17) {
@@ -112,7 +111,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     return null
   }, [isValidVin])
 
-  // Cleanup resources safely
+  // Limpieza segura de recursos
   const cleanup = useCallback(() => {
     if (scanIntervalRef.current) {
       clearInterval(scanIntervalRef.current)
@@ -158,99 +157,82 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     }
   }, [cleanup])
 
-  // Improved OCR with binarization and showing cropped canvas for debug
+  // OCR mejorado con preprocesamiento básico (contraste y nitidez)
   const processOCR = useCallback(async () => {
-  if (!videoRef.current || !canvasRef.current || !isMountedRef.current) return
-  try {
-    setIsOcrProcessing(true)
-    setScanStatus('Processing text recognition...')
-    const canvas = canvasRef.current
-    const video = videoRef.current
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-
-    // Ajuste para que el recorte esté centrado verticalmente y coincida con el marco visible
-    const cropX = canvas.width * 0.05
-    const cropWidth = canvas.width * 0.9
-    const cropHeight = canvas.height * 0.12
-    const cropY = (canvas.height - cropHeight) / 2
-
-    const croppedCanvas = document.createElement('canvas')
-    const croppedCtx = croppedCanvas.getContext('2d')
-    if (!croppedCtx) return
-    croppedCanvas.width = cropWidth
-    croppedCanvas.height = cropHeight
-    croppedCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight)
-
-    // Preprocesamiento: binarización simple para mejorar OCR
-    const imageData = croppedCtx.getImageData(0, 0, cropWidth, cropHeight)
-    const data = imageData.data
-    for (let i = 0; i < data.length; i += 4) {
-      const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
-      const threshold = 128
-      const binarized = gray > threshold ? 255 : 0
-      data[i] = data[i + 1] = data[i + 2] = binarized
-    }
-    croppedCtx.putImageData(imageData, 0, 0)
-
-    // Mostrar canvas recortado para debug
-    const debugCanvas = document.getElementById('vin-ocr-debug-canvas') as HTMLCanvasElement | null
-    if (debugCanvas) {
-      const debugCtx = debugCanvas.getContext('2d')
-      if (debugCtx) {
-        debugCanvas.width = cropWidth
-        debugCanvas.height = cropHeight
-        debugCtx.clearRect(0, 0, cropWidth, cropHeight)
-        debugCtx.drawImage(croppedCanvas, 0, 0)
+    if (!videoRef.current || !canvasRef.current || !isMountedRef.current) return
+    try {
+      setIsOcrProcessing(true)
+      setScanStatus('Processing text recognition...')
+      const canvas = canvasRef.current
+      const video = videoRef.current
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+      // Área de recorte para VIN (ajustado)
+      const cropX = canvas.width * 0.05
+      const cropY = canvas.height * 0.44
+      const cropWidth = canvas.width * 0.9
+      const cropHeight = canvas.height * 0.12
+      const croppedCanvas = document.createElement('canvas')
+      const croppedCtx = croppedCanvas.getContext('2d')
+      if (!croppedCtx) return
+      croppedCanvas.width = cropWidth
+      croppedCanvas.height = cropHeight
+      croppedCtx.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight)
+      // Preprocesamiento: mejorar contraste y nitidez
+      const imageData = croppedCtx.getImageData(0, 0, cropWidth, cropHeight)
+      const data = imageData.data
+      for (let i = 0; i < data.length; i += 4) {
+        const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
+        const contrast = Math.min(255, Math.max(0, (gray - 128) * 2.0 + 128))
+        data[i] = data[i + 1] = data[i + 2] = contrast
+      }
+      croppedCtx.putImageData(imageData, 0, 0)
+      console.log('[VIN Scanner] 🧪 Enviando imagen a Tesseract para OCR...')
+      const ocrResult = await Tesseract.recognize(
+        croppedCanvas,
+        'eng',
+        {
+          logger: m => console.log('[Tesseract log]', m),
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+          tessedit_pageseg_mode: Tesseract.PSM.SINGLE_TEXT_LINE,
+          tessedit_ocr_engine_mode: Tesseract.OEM.LSTM_ONLY,
+          preserve_interword_spaces: '1',
+        }
+      )
+      if (!isMountedRef.current) return
+      const text = ocrResult.data.text
+      console.log('[VIN Scanner] OCR text result:', JSON.stringify(text))
+      if (!text || !text.trim()) {
+        console.warn('[VIN Scanner] ❌ OCR no devolvió texto.')
+      } else {
+        console.info('[VIN Scanner] 🧾 OCR devolvió texto crudo:', text)
+      }
+      const detectedVin = extractVinFromText(text)
+      if (detectedVin) {
+        console.log('[VIN Scanner] VIN detected via OCR:', detectedVin)
+        setScanResult(detectedVin)
+        setScanStatus(`VIN detected: ${detectedVin}`)
+        onVinDetected(detectedVin)
+        setTimeout(stopScanning, 1000)
+        return
+      }
+      setScanStatus('Scanning for text...')
+    } catch (error: any) {
+      console.error('[VIN Scanner] OCR error:', error)
+      if (isMountedRef.current) {
+        setScanStatus('OCR processing failed')
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsOcrProcessing(false)
       }
     }
+  }, [extractVinFromText, onVinDetected, stopScanning])
 
-    console.log('[VIN Scanner] 🧪 Sending image to Tesseract for OCR...')
-    const ocrResult = await Tesseract.recognize(
-      croppedCanvas,
-      'eng',
-      {
-        logger: m => console.log('[Tesseract log]', m),
-        tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-        psm: Tesseract.PSM.SINGLE_LINE,
-        oem: Tesseract.OEM.LSTM_ONLY,
-        preserve_interword_spaces: '1',
-      }
-    )
-    if (!isMountedRef.current) return
-    const text = ocrResult.data.text
-    console.log('[VIN Scanner] OCR text result:', JSON.stringify(text))
-    if (!text || !text.trim()) {
-      console.warn('[VIN Scanner] ❌ OCR returned empty text.')
-    } else {
-      console.info('[VIN Scanner] 🧾 OCR raw text:', text)
-    }
-    const detectedVin = extractVinFromText(text)
-    if (detectedVin) {
-      console.log('[VIN Scanner] VIN detected via OCR:', detectedVin)
-      setScanResult(detectedVin)
-      setScanStatus(`VIN detected: ${detectedVin}`)
-      onVinDetected(detectedVin)
-      setTimeout(stopScanning, 1000)
-      return
-    }
-    setScanStatus('Scanning for text...')
-  } catch (error: any) {
-    console.error('[VIN Scanner] OCR error:', error)
-    if (isMountedRef.current) {
-      setScanStatus('OCR processing failed')
-    }
-  } finally {
-    if (isMountedRef.current) {
-      setIsOcrProcessing(false)
-    }
-  }
-}, [extractVinFromText, onVinDetected, stopScanning])
-
-  // Barcode scanning disabled for now to avoid errors, but code kept for future
+  // Escaneo de código de barras mejorado con más formatos y tolerancia
   const processBarcodeScanning = useCallback(async (deviceId: string) => {
     if (!videoRef.current || !readerRef.current || !isMountedRef.current) return
     try {
@@ -335,27 +317,26 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     try {
       console.log(`[VIN Scanner] Starting camera with device: ${deviceId}`)
 
-      // For now, only OCR mode scanning
-      if (scanMode === 'ocr') {
-        // Start video stream manually
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { deviceId: { exact: deviceId } }
-        })
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-          await videoRef.current.play()
-        }
-        setIsCameraReady(true)
-        setScanStatus('Ready for text recognition...')
-        scanIntervalRef.current = setInterval(processOCR, 1500)
-      } else {
-        // Barcode scanning code (disabled for now)
-        await processBarcodeScanning(deviceId)
-        setIsCameraReady(true)
-        setScanStatus('Scanning for barcodes...')
-      }
+      await processBarcodeScanning(deviceId)
 
       console.log('[VIN Scanner] Camera started successfully')
+      if (isMountedRef.current) {
+        setIsCameraReady(true)
+        setScanStatus(scanMode === 'barcode' ? 'Scanning for barcodes...' :
+          scanMode === 'ocr' ? 'Ready for text recognition...' :
+            'Scanning for barcodes and text...')
+      }
+
+      if (scanMode === 'ocr') {
+        scanIntervalRef.current = setInterval(processOCR, 1000)
+      } else if (scanMode === 'auto') {
+        ocrTimeoutRef.current = setTimeout(() => {
+          if (isMountedRef.current && isScanningActive && !scanResult) {
+            setScanStatus('Switching to text recognition...')
+            scanIntervalRef.current = setInterval(processOCR, 1000)
+          }
+        }, 1500)
+      }
 
     } catch (error: any) {
       console.error('[VIN Scanner] Failed to start camera:', error)
@@ -394,7 +375,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
         onError(errorMessage)
       }
     }
-  }, [onVinDetected, onError, stopScanning, isScanningActive, scanMode, processBarcodeScanning, processOCR])
+  }, [onVinDetected, onError, stopScanning, isScanningActive, scanMode, processBarcodeScanning, processOCR, scanResult])
 
   useEffect(() => {
     const initializeScanner = async () => {
@@ -482,20 +463,31 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     }
   }, [selectedDeviceId, isScanningActive, startScanning])
 
-  // Mode change disabled, fixed to OCR for now
   const handleModeChange = useCallback((mode: ScanMode) => {
-    // Disabled mode change to force OCR mode
-  }, [])
+    setScanMode(mode)
+
+    if (isScanningActive && selectedDeviceId) {
+      setTimeout(() => startScanning(selectedDeviceId), 100)
+    }
+  }, [isScanningActive, selectedDeviceId, startScanning])
 
   return (
     <div className="flex flex-col h-full w-full min-h-[500px]">
-      {/* Mode Selection - disabled */}
+      {/* Mode Selection */}
       <div className="p-3 bg-gray-50 dark:bg-gray-800 border-b">
         <Tabs value={scanMode} onValueChange={handleModeChange} className="w-full">
           <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="ocr" className="flex items-center gap-1 cursor-not-allowed opacity-50" disabled>
+            <TabsTrigger value="auto" className="flex items-center gap-1">
+              <Zap className="h-4 w-4" />
+              Auto
+            </TabsTrigger>
+            <TabsTrigger value="barcode" className="flex items-center gap-1">
+              <QrCode className="h-4 w-4" />
+              Barcode
+            </TabsTrigger>
+            <TabsTrigger value="ocr" className="flex items-center gap-1">
               <Type className="h-4 w-4" />
-              Text (OCR only)
+              Text
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -613,31 +605,38 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
           className="hidden"
         />
 
-        {/* Debug canvas to show cropped OCR area */}
-        <canvas
-          id="vin-ocr-debug-canvas"
-          className="absolute bottom-2 right-2 border border-white"
-          style={{ width: '200px', height: '30px', backgroundColor: 'black' }}
-        />
-
-        {/* OCR scanning frame */}
+        {/* Scanning overlay */}
         {isCameraReady && isScanningActive && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div
-              className="border-2 border-orange-400 rounded-lg bg-transparent"
-              style={{
-                width: '90%',
-                height: '12%',
-                boxShadow: '0 0 0 9999px rgba(0,0,0,0.3)'
-              }}
-            >
-              <div className="absolute -top-6 left-0 bg-orange-400 text-black px-2 py-1 rounded text-xs font-medium">
-                VIN Text Area
+          <div className="absolute inset-0 pointer-events-none">
+            {/* Barcode scanning area - MÁS PEQUEÑO */}
+            {(scanMode === 'barcode' || scanMode === 'auto') && (
+              <div className="absolute inset-6 border-2 border-green-400 rounded-lg opacity-60">
+                <div className="absolute -top-6 left-0 bg-green-400 text-black px-2 py-1 rounded text-xs font-medium">
+                  Barcode/QR Scan Area
+                </div>
               </div>
-              <div className="absolute bottom-2 left-2 right-2 text-center text-white text-xs bg-black bg-opacity-50 rounded px-2 py-1">
-                Position VIN horizontally in this narrow frame
+            )}
+
+            {/* OCR scanning frame - MUCHO MÁS PEQUEÑO Y DELGADO */}
+            {(scanMode === 'ocr' || (scanMode === 'auto' && isOcrProcessing)) && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div
+                  className="border-2 border-orange-400 rounded-lg bg-transparent"
+                  style={{
+                    width: '90%',
+                    height: '12%',
+                    boxShadow: '0 0 0 9999px rgba(0,0,0,0.3)'
+                  }}
+                >
+                  <div className="absolute -top-6 left-0 bg-orange-400 text-black px-2 py-1 rounded text-xs font-medium">
+                    VIN Text Area
+                  </div>
+                  <div className="absolute bottom-2 left-2 right-2 text-center text-white text-xs bg-black bg-opacity-50 rounded px-2 py-1">
+                    Position VIN horizontally in this narrow frame
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -667,7 +666,9 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
               <Video className="h-12 w-12 mx-auto mb-2 opacity-50" />
               <p>Press Start to begin scanning</p>
               <p className="text-sm opacity-75 mt-1">
-                OCR mode only for better VIN detection
+                {scanMode === 'auto' && 'Auto: Barcode first, then text recognition'}
+                {scanMode === 'barcode' && 'Barcode: QR codes and barcodes only'}
+                {scanMode === 'ocr' && 'Text: OCR text recognition only'}
               </p>
             </div>
           </div>
