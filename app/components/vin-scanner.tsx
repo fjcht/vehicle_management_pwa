@@ -128,7 +128,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     // Calcular las coordenadas relativas del área de escaneo
     // Área de escaneo: 90% ancho, 12% alto, centrado
     const scanAreaWidth = 0.9
-    const scanAreaHeight = 0.12
+    const scanAreaHeight = 0.9
     const scanAreaX = 0.05 // 5% margen izquierdo
     const scanAreaY = 0.75 // Centrado verticalmente
 
