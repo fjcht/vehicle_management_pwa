@@ -75,21 +75,21 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
   // Extraer VIN de texto
   const extractVinFromText = useCallback((text: string): string | null => {
     console.log('[VIN Scanner] Raw text:', text)
-    const cleanText = text.toUpperCase().replace(/[^A-Z0-9\s\-_\.]/g, ' ')
+    const cleanText = text.toUpperCase().replace(/[^A-Z0-9\s-_.]/g, ' ')
     
     const vinPatterns = [
       /\b[A-Z0-9]{17}\b/g,
       /[A-Z0-9]{17}/g,
-      /\b[A-Z0-9]{3}[\s\-_]?[A-Z0-9]{2}[\s\-_]?[A-Z0-9]{12}\b/g,
-      /[A-Z0-9]{3}[\s\-_\.]{1,2}[A-Z0-9]{2}[\s\-_\.]{1,2}[A-Z0-9]{12}/g,
-      /[A-Z0-9]{5}[\s\-_\.]{1,2}[A-Z0-9]{12}/g,
+      /\b[A-Z0-9]{3}[\s-_]?[A-Z0-9]{2}[\s-_]?[A-Z0-9]{12}\b/g,
+      /[A-Z0-9]{3}[\s-_.]{1,2}[A-Z0-9]{2}[\s-_.]{1,2}[A-Z0-9]{12}/g,
+      /[A-Z0-9]{5}[\s-_.]{1,2}[A-Z0-9]{12}/g,
     ]
 
     for (const pattern of vinPatterns) {
       const matches = cleanText.match(pattern)
       if (matches) {
         for (const match of matches) {
-          const cleanMatch = match.replace(/[\s\-_\.]/g, '')
+          const cleanMatch = match.replace(/[\s-_.]/g, '')
           console.log('[VIN Scanner] Testing potential VIN:', cleanMatch)
           if (isValidVin(cleanMatch)) {
             console.log('[VIN Scanner] Valid VIN found:', cleanMatch)
@@ -711,3 +711,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
