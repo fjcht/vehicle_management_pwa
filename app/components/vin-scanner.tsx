@@ -660,9 +660,8 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
         {/* Scanning overlay */}
         {isCameraReady && isScanningActive && (
           <div className="absolute inset-0 pointer-events-none">
-            {/* Barcode scanning area */}
+            {/* Barcode scanning area - MÁS PEQUEÑO */}
             {(scanMode === 'barcode' || scanMode === 'auto') && (
-<<<<<<< HEAD
               <div
                 className="absolute border-2 border-green-400 rounded-lg opacity-60"
                 style={{
@@ -676,12 +675,6 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
              >
               <div className="absolute -top-6 left-0 bg-green-400 text-black px-2 py-1 rounded text-xs font-medium">
                 Barcode/QR Scan Area
-=======
-              <div className="absolute inset-12 border-2 border-green-400 rounded-lg opacity-60">
-                <div className="absolute -top-6 left-0 bg-green-400 text-black px-2 py-1 rounded text-xs font-medium">
-                  Barcode/QR Scan Area
-                </div>
->>>>>>> a0bec17d7ab14067ba379f0ccf6d9b150caa9fc9
               </div>
             </div>
           )}
