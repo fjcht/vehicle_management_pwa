@@ -130,7 +130,7 @@ export function VinScanner({ onVinDetected, onError }: VinScannerProps) {
     const scanAreaWidth = 0.9
     const scanAreaHeight = 0.12
     const scanAreaX = 0.05 // 5% margen izquierdo
-    const scanAreaY = 0.34 // Centrado verticalmente
+    const scanAreaY = 0.3 // Centrado verticalmente
 
     // Convertir a coordenadas absolutas del video
     const actualVideoWidth = video.videoWidth
