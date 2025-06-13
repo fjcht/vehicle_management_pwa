@@ -104,16 +104,22 @@ export async function POST(request: NextRequest) {
     // Check if VIN already exists (if provided)
     if (vin) {
       const existingVin = await prisma.vehicle.findUnique({
-        where: { vin }
+        where: {
+          vin_companyId: {
+            vin,
+            companyId: session.user.companyId
+          }
+        }
       })
 
       if (existingVin) {
         return NextResponse.json(
-          { error: 'Vehicle with this VIN already exists' },
+          { error: 'Vehicle with this VIN already exists in your company' },
           { status: 400 }
         )
       }
     }
+
 
     // Verify client belongs to the company (if provided)
     if (clientId) {
