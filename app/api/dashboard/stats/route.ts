@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/app/lib/auth'
@@ -30,9 +29,14 @@ export async function GET(request: NextRequest) {
       recentRepairs,
       statusCounts
     ] = await Promise.all([
-      // Total vehicles
+      // Total vehicles WITHOUT repair orders (solo vehículos sin órdenes de reparación)
       prisma.vehicle.count({
-        where: { companyId }
+        where: { 
+          companyId,
+          repairOrders: {
+            none: {} // Vehículos que NO tienen ninguna orden de reparación
+          }
+        }
       }),
       
       // Total clients
