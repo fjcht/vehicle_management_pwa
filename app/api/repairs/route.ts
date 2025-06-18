@@ -2,13 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/app/lib/auth'
 import { prisma } from '@/app/lib/db'
-
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-
     if (!session?.user?.companyId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -45,7 +43,6 @@ export async function GET(request: NextRequest) {
     })
 
     return NextResponse.json(repairs)
-
   } catch (error) {
     console.error('Error fetching repair orders:', error)
     return NextResponse.json(
@@ -58,7 +55,6 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions)
-
     if (!session?.user?.companyId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -88,9 +84,12 @@ export async function POST(request: NextRequest) {
 
     // Clean and validate data - handle special frontend values
     const cleanClientId = clientId && clientId !== 'no_client' && clientId !== '' ? clientId : null
-    const cleanAssignedToId = assignedToId && assignedToId !== 'no_assignment' && assignedToId !== '' ? assignedToId : null
-    const cleanEstimatedCost = estimatedCost && !isNaN(parseFloat(estimatedCost)) ? parseFloat(estimatedCost) : null
-    const cleanEstimatedEndDate = estimatedEndDate && estimatedEndDate !== '' ? new Date(estimatedEndDate) : null
+    const cleanAssignedToId = assignedToId && assignedToId !== 'no_assignment' &&
+      assignedToId !== '' ? assignedToId : null
+    const cleanEstimatedCost = estimatedCost && !isNaN(parseFloat(estimatedCost)) ?
+      parseFloat(estimatedCost) : null
+    const cleanEstimatedEndDate = estimatedEndDate && estimatedEndDate !== '' ? new
+      Date(estimatedEndDate) : null
 
     console.log('Cleaned data:', {
       cleanClientId,
@@ -149,23 +148,81 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Generate order number in a safe way
-    const lastOrder = await prisma.repairOrder.findFirst({
-      where: { companyId: session.user.companyId },
-      orderBy: { id: 'desc' },
-      select: { orderNumber: true }
-    })
+    // Generate unique order number with retry mechanism
+    let orderNumber: string
+    let attempts = 0
+    const maxAttempts = 10
 
-    let nextNumber = 1
+    while (attempts < maxAttempts) {
+      try {
+        // Find the highest existing order number for this company
+        const lastOrder = await prisma.repairOrder.findFirst({
+          where: { 
+            companyId: session.user.companyId,
+            orderNumber: {
+              startsWith: 'RO-'
+            }
+          },
+          orderBy: { orderNumber: 'desc' },
+          select: { orderNumber: true }
+        })
 
-    if (lastOrder?.orderNumber) {
-      const match = lastOrder.orderNumber.match(/RO-(\d+)/)
-      if (match) {
-        nextNumber = parseInt(match[1]) + 1
+        let nextNumber = 1
+        if (lastOrder?.orderNumber) {
+          const match = lastOrder.orderNumber.match(/RO-(\d+)/)
+          if (match) {
+            nextNumber = parseInt(match[1]) + 1
+          }
+        }
+
+        // Add attempt number to ensure uniqueness in case of race conditions
+        const uniqueNumber = nextNumber + attempts
+        orderNumber = `RO-${String(uniqueNumber).padStart(6, '0')}`
+
+        // Check if this order number already exists
+        const existingOrder = await prisma.repairOrder.findFirst({
+          where: {
+            orderNumber,
+            companyId: session.user.companyId
+          }
+        })
+
+        if (!existingOrder) {
+          // Order number is unique, break the loop
+          break
+        }
+
+        attempts++
+        if (attempts >= maxAttempts) {
+          throw new Error('Unable to generate unique order number after maximum attempts')
+        }
+
+      } catch (orderGenError) {
+        console.error('Error generating order number, attempt:', attempts + 1, orderGenError)
+        attempts++
+        
+        if (attempts >= maxAttempts) {
+          // Fallback: use timestamp-based order number
+          const timestamp = Date.now().toString().slice(-6)
+          orderNumber = `RO-${timestamp}`
+          
+          // Final check for timestamp-based number
+          const timestampCheck = await prisma.repairOrder.findFirst({
+            where: {
+              orderNumber,
+              companyId: session.user.companyId
+            }
+          })
+          
+          if (timestampCheck) {
+            orderNumber = `RO-${timestamp}-${Math.floor(Math.random() * 1000)}`
+          }
+          break
+        }
       }
     }
 
-    const orderNumber = `RO-${String(nextNumber).padStart(6, '0')}`
+    console.log('Generated order number:', orderNumber)
 
     console.log('Creating repair order with data:', {
       orderNumber,
@@ -241,8 +298,9 @@ export async function POST(request: NextRequest) {
       message: error instanceof Error ? error.message : 'Unknown error',
       stack: error instanceof Error ? error.stack : undefined
     })
+
     return NextResponse.json(
-      { 
+      {
         error: 'Internal server error',
         details: error instanceof Error ? error.message : 'Unknown error'
       },
